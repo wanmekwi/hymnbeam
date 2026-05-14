@@ -1,0 +1,23 @@
+{
+  "title": "Amazing Grace",
+  "author": "John Newton",
+  "tags": ["hymn", "traditional"],
+  "verses": [
+    {
+      "label": "Verse 1",
+      "text": "Amazing grace, how sweet the sound\nThat saved a wretch like me\nI once was lost, but now I'm found\nWas blind but now I see"
+    },
+    {
+      "label": "Verse 2",
+      "text": "'Twas grace that taught my heart to fear\nAnd grace my fears relieved\nHow precious did that grace appear\nThe hour I first believed"
+    },
+    {
+      "label": "Verse 3",
+      "text": "Through many dangers, toils and snares\nI have already come\n'Tis grace hath brought me safe thus far\nAnd grace will lead me home"
+    },
+    {
+      "label": "Verse 4",
+      "text": "When we've been there ten thousand years\nBright shining as the sun\nWe've no less days to sing God's praise\nThan when we first begun"
+    }
+  ]
+}

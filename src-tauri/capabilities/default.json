@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for Song Rays",
+  "windows": ["operator", "projector"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open"
+  ]
+}

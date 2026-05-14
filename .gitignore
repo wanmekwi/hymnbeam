@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+target/
+dist/
+build/
+src-tauri/binaries/
+
+# Database
+data/
+*.db
+
+# Personal song libraries (not for distribution)
+251123_Hymns.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local

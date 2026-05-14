@@ -1,0 +1,214 @@
+:root {
+    --bg-color: #000000;
+    --text-color: #ffffff;
+    --font-display: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    background: var(--bg-color);
+    font-family: var(--font-display);
+    -webkit-font-smoothing: antialiased;
+    cursor: none;
+}
+
+.projector {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    background: 
+        radial-gradient(ellipse 100% 60% at 50% 100%, rgba(30, 25, 15, 0.4), transparent 70%),
+        var(--bg-color);
+}
+
+.song-title-bar {
+    position: absolute;
+    top: 16px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-family: var(--font-display);
+    font-size: clamp(16px, 2.5vw, 28px);
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    padding: 0 48px 14px;
+    opacity: 0;
+    transition: opacity 400ms ease;
+}
+
+.song-title-bar.visible {
+    opacity: 1;
+}
+
+.song-title-bar::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(600px, 70%);
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+}
+
+.song-meta-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    font-family: var(--font-display);
+    font-size: clamp(16px, 2.5vw, 28px);
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.7);
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+    padding: 20px 48px 24px;
+    opacity: 0;
+    transition: opacity 400ms ease;
+}
+
+.song-meta-bar.visible {
+    opacity: 1;
+}
+
+.song-meta-bar::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(600px, 70%);
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+}
+
+.song-meta-bar .meta-col {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.song-meta-bar .meta-col:nth-child(1) {
+    justify-content: flex-start;
+}
+
+.song-meta-bar .meta-col:nth-child(2) {
+    justify-content: center;
+}
+
+.song-meta-bar .meta-col:nth-child(3) {
+    justify-content: flex-end;
+}
+
+.song-meta-bar .meta-label {
+    opacity: 0.6;
+    font-weight: 500;
+}
+
+.song-meta-bar .meta-value {
+    font-weight: 600;
+}
+
+.lyrics-container {
+    width: 100%;
+    max-width: 94%;
+    padding: 80px 40px 100px;
+    text-align: center;
+    opacity: 1;
+    transform: translateY(0);
+    transition: 
+        opacity 400ms cubic-bezier(0.4, 0, 0.2, 1),
+        transform 400ms cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+}
+
+.lyrics-container.transitioning {
+    opacity: 0;
+    transform: translateY(15px);
+}
+
+.lyrics-text {
+    font-family: var(--font-display);
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--text-color);
+    text-shadow: 
+        0 3px 12px rgba(0, 0, 0, 0.6),
+        0 0 80px rgba(255, 255, 255, 0.03);
+    white-space: pre-wrap;
+    letter-spacing: 0.02em;
+    max-width: 100%;
+}
+
+.lyrics-text.size-xl {
+    font-size: clamp(48px, 8vw, 96px);
+}
+
+.lyrics-text.size-lg {
+    font-size: clamp(40px, 6.5vw, 80px);
+}
+
+.lyrics-text.size-md {
+    font-size: clamp(32px, 5vw, 64px);
+}
+
+.lyrics-text.size-sm {
+    font-size: clamp(26px, 4vw, 52px);
+    line-height: 1.3;
+}
+
+.lyrics-text.size-xs {
+    font-size: clamp(20px, 3vw, 40px);
+    line-height: 1.25;
+}
+
+.blank-screen {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    opacity: 0;
+    visibility: hidden;
+    transition: 
+        opacity 400ms ease,
+        visibility 400ms ease;
+    z-index: 100;
+}
+
+.blank-screen.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.lyrics-text.entering {
+    animation: fadeInUp 500ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
