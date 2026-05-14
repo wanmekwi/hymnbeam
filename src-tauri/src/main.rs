@@ -19,6 +19,11 @@ fn get_api_port() -> u16 {
 }
 
 #[tauri::command]
+fn get_app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
 fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     let monitor_list: Vec<_> = monitors.into_iter().collect();
@@ -82,6 +87,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_api_port,
+            get_app_version,
             open_projector_window,
             close_projector_window,
             send_to_projector

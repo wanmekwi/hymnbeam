@@ -28,6 +28,22 @@ async function initApiUrl() {
     }
 }
 
+// The backend server is started before the window opens, so it's normally
+// ready immediately — but poll briefly so a slow first start can't leave the
+// UI stuck on an error.
+async function waitForBackend(retries = 15, delayMs = 150) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(`${API_URL}/`);
+            if (response.ok) return true;
+        } catch (e) {
+            // not up yet — keep waiting
+        }
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+    return false;
+}
+
 const elements = {
     searchInput: document.getElementById('searchInput'),
     songList: document.getElementById('songList'),
@@ -68,6 +84,10 @@ const elements = {
     confirmDeleteBtn: document.getElementById('confirmDeleteBtn'),
     exportBtn: document.getElementById('exportBtn'),
     exportMenu: document.getElementById('exportMenu'),
+    aboutBtn: document.getElementById('aboutBtn'),
+    aboutModal: document.getElementById('aboutModal'),
+    closeAboutModal: document.getElementById('closeAboutModal'),
+    aboutVersion: document.getElementById('aboutVersion'),
 };
 
 
@@ -81,7 +101,7 @@ async function fetchSongs() {
         updateStatus('connected');
     } catch (error) {
         console.error('Error fetching songs:', error);
-        updateStatus('Backend not running. Start with: cd backend && python3 main.py');
+        updateStatus('Backend not responding');
     }
 }
 
@@ -667,6 +687,25 @@ function closeExportMenu() {
 }
 
 
+async function openAboutModal() {
+    let version = '';
+    if (window.__TAURI__) {
+        try {
+            version = await window.__TAURI__.core.invoke('get_app_version');
+        } catch (e) {
+            console.warn('Could not get app version:', e);
+        }
+    }
+    elements.aboutVersion.textContent = version ? `Version ${version}` : '';
+    elements.aboutModal.classList.add('active');
+}
+
+
+function closeAboutModal() {
+    elements.aboutModal.classList.remove('active');
+}
+
+
 async function fetchCollections() {
     try {
         const response = await fetch(`${API_URL}/collections`);
@@ -994,6 +1033,12 @@ function initEventListeners() {
         if (e.target === elements.importModal) closeImportModal();
     });
 
+    elements.aboutBtn.addEventListener('click', openAboutModal);
+    elements.closeAboutModal.addEventListener('click', closeAboutModal);
+    elements.aboutModal.addEventListener('click', (e) => {
+        if (e.target === elements.aboutModal) closeAboutModal();
+    });
+
     elements.dropZone.addEventListener('click', () => elements.fileInput.click());
     elements.dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -1133,6 +1178,13 @@ function initEventListeners() {
 document.addEventListener('DOMContentLoaded', async () => {
     await initApiUrl();
     initEventListeners();
+
+    const ready = await waitForBackend();
+    if (!ready) {
+        updateStatus('Backend not responding');
+        return;
+    }
+
     fetchSongs();
     fetchCollections();
 });

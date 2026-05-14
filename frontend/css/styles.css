@@ -76,6 +76,17 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
+    background: none;
+    border: none;
+    padding: 4px 8px;
+    margin: -4px -8px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 150ms ease;
+}
+
+.logo:hover {
+    background: var(--bg-tertiary);
 }
 
 .logo-icon {
@@ -90,6 +101,42 @@ body {
     font-weight: 500;
     letter-spacing: 0.02em;
     color: var(--text-primary);
+}
+
+.about-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 6px;
+    padding: 8px 0 4px;
+}
+
+.about-logo {
+    width: 48px;
+    height: 48px;
+    color: var(--accent);
+    margin-bottom: 4px;
+}
+
+.about-name {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.about-version {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.about-desc {
+    margin-top: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    max-width: 280px;
 }
 
 .header-controls {

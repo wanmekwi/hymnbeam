@@ -10,13 +10,13 @@
 <body>
     <div class="app">
         <header class="header">
-            <div class="logo">
+            <button class="logo" id="aboutBtn" type="button" title="About Song Rays">
                 <svg class="logo-icon" viewBox="0 0 32 32" fill="none">
                     <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="1.5"/>
                     <path d="M16 6v20M10 10l12 12M22 10L10 22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                 </svg>
                 <span class="logo-text">Song Rays</span>
-            </div>
+            </button>
             <div class="header-controls">
                 <div class="export-wrapper">
                     <button class="btn btn-secondary" id="exportBtn">
@@ -334,6 +334,30 @@ Second verse lyrics..."></textarea>
                 <div class="form-actions">
                     <button class="btn btn-secondary" id="cancelDeleteBtn">Cancel</button>
                     <button class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal modal-small">
+            <div class="modal-header">
+                <h2>About</h2>
+                <button class="btn btn-icon modal-close" id="closeAboutModal" title="Close" aria-label="Close modal">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M5 5l10 10M15 5L5 15"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="about-content">
+                    <svg class="about-logo" viewBox="0 0 32 32" fill="none">
+                        <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="M16 6v20M10 10l12 12M22 10L10 22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                    <div class="about-name">Song Rays</div>
+                    <div class="about-version" id="aboutVersion">Version —</div>
+                    <p class="about-desc">A church song projector for displaying lyrics to a congregation.</p>
                 </div>
             </div>
         </div>
