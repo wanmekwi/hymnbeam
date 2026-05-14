@@ -72,22 +72,23 @@ const FILL_RATIO = 0.9;
 const MIN_FONT_PX = 16;
 
 // Scale the verse to fill ~90% of the screen on whichever axis binds first.
-// With `white-space: pre` the text never wraps, so its width and height both
-// scale linearly with font-size — one measurement at a base size is enough to
-// solve for the exact fit, no iteration needed.
+// With `white-space: pre` the text never wraps, so width and height scale
+// (almost) linearly with font-size. Font metrics aren't perfectly linear
+// though — sub-pixel rounding and hinting — so we measure-and-correct a few
+// passes to converge, then round the result down so it never tips over 90%.
 function fitText(element) {
-    const BASE = 100;
-    element.style.fontSize = BASE + 'px';
-
-    const naturalW = element.scrollWidth;
-    const naturalH = element.scrollHeight;
-    if (!naturalW || !naturalH) return;
-
     const targetW = window.innerWidth * FILL_RATIO;
     const targetH = window.innerHeight * FILL_RATIO;
-    const scale = Math.min(targetW / naturalW, targetH / naturalH);
 
-    element.style.fontSize = Math.max(MIN_FONT_PX, BASE * scale).toFixed(1) + 'px';
+    let fontSize = 100;
+    for (let pass = 0; pass < 3; pass++) {
+        element.style.fontSize = fontSize + 'px';
+        const rect = element.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        fontSize *= Math.min(targetW / rect.width, targetH / rect.height);
+    }
+
+    element.style.fontSize = Math.max(MIN_FONT_PX, Math.floor(fontSize * 10) / 10) + 'px';
 }
 
 

@@ -156,6 +156,7 @@ body {
     white-space: pre;
     letter-spacing: 0.02em;
     width: max-content;
+    flex-shrink: 0;
 }
 
 .blank-screen {
