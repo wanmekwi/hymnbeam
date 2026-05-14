@@ -130,16 +130,32 @@ song_rays/
 └── data/               # SQLite database (created on first run)
 ```
 
-## Building for Production
+## Building for Distribution (macOS)
+
+Build a universal (Apple Silicon + Intel) `.app` and `.dmg`, ad-hoc signed:
 
 ```bash
-cd src-tauri
-cargo tauri build
+./build-macos.sh
 ```
 
-Installers are created in `src-tauri/target/release/bundle/`:
-- macOS: `.dmg` and `.app`
-- Windows: `.exe` and `.msi`
+Output lands in `src-tauri/target/universal-apple-darwin/release/bundle/`.
+
+For a single-arch local build you can still run `cd src-tauri && cargo tauri build`.
+
+## Installing (macOS)
+
+The app is ad-hoc signed but not notarized (no Apple Developer ID yet), so
+after downloading the `.dmg` macOS Gatekeeper will quarantine it. Drag
+**Song Rays** to `/Applications`, then either:
+
+- Right-click the app → **Open**, and confirm once, **or**
+- clear the quarantine flag from a terminal:
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Song Rays.app"
+  ```
+
+This is a one-time step per download.
 
 ## License
 
