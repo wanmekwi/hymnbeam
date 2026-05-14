@@ -8,36 +8,47 @@ const elements = {
 
 let currentText = '';
 let currentSongId = null;
+let currentVerses = [];
+let songFontSize = null;
+
+// Off-screen node for measuring verse sizes without disturbing the visible one.
+const measureEl = document.createElement('div');
+measureEl.className = 'lyrics-text';
+measureEl.setAttribute('aria-hidden', 'true');
+measureEl.style.cssText = 'position:absolute;visibility:hidden;left:-99999px;top:0';
+document.body.appendChild(measureEl);
 
 
 function updateDisplay(data) {
-    const { text, isBlank, title, author, musical_key, songId } = data;
-    
+    const { text, isBlank, title, author, musical_key, songId, verses } = data;
+
     if (isBlank) {
         elements.blankScreen.classList.add('active');
         elements.songTitleBar.classList.remove('visible');
         elements.songMetaBar.classList.remove('visible');
         return;
     }
-    
+
     elements.blankScreen.classList.remove('active');
-    
+
     if (songId !== currentSongId) {
         currentSongId = songId;
         updateSongMeta(title, author, musical_key, songId);
+        currentVerses = verses && verses.length ? verses : (text ? [text] : []);
+        songFontSize = computeSongFontSize(currentVerses);
     }
-    
+
     if (text === currentText) return;
-    
+
     elements.lyricsContainer.classList.add('transitioning');
-    
+
     setTimeout(() => {
         currentText = text;
         elements.lyricsText.textContent = text;
-        fitText(elements.lyricsText);
+        applySongFontSize();
         elements.lyricsContainer.classList.remove('transitioning');
         elements.lyricsText.classList.add('entering');
-        
+
         setTimeout(() => {
             elements.lyricsText.classList.remove('entering');
         }, 500);
@@ -71,24 +82,44 @@ function updateSongMeta(title, author, musical_key, songId) {
 const FILL_RATIO = 0.9;
 const MIN_FONT_PX = 16;
 
-// Scale the verse to fill ~90% of the screen on whichever axis binds first.
-// With `white-space: pre` the text never wraps, so width and height scale
-// (almost) linearly with font-size. Font metrics aren't perfectly linear
-// though — sub-pixel rounding and hinting — so we measure-and-correct a few
-// passes to converge, then round the result down so it never tips over 90%.
-function fitText(element) {
+// Measure the largest font-size at which `text` fits within the 90% box, using
+// the off-screen node so the visible verse isn't disturbed. `white-space: pre`
+// means lines never wrap (they break only where the lyrics already do), so
+// width and height scale almost linearly with font-size. Font metrics aren't
+// perfectly linear though — sub-pixel rounding, hinting — so we measure-and-
+// correct over a few passes and round down so it never tips over 90%.
+function measureFitSize(text) {
+    measureEl.textContent = text;
     const targetW = window.innerWidth * FILL_RATIO;
     const targetH = window.innerHeight * FILL_RATIO;
 
     let fontSize = 100;
     for (let pass = 0; pass < 3; pass++) {
-        element.style.fontSize = fontSize + 'px';
-        const rect = element.getBoundingClientRect();
-        if (!rect.width || !rect.height) return;
+        measureEl.style.fontSize = fontSize + 'px';
+        const rect = measureEl.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
         fontSize *= Math.min(targetW / rect.width, targetH / rect.height);
     }
 
-    element.style.fontSize = Math.max(MIN_FONT_PX, Math.floor(fontSize * 10) / 10) + 'px';
+    return Math.max(MIN_FONT_PX, Math.floor(fontSize * 10) / 10);
+}
+
+// One font-size for the whole song: the size that fits the most demanding
+// verse, so the chorus and every verse render at exactly the same scale.
+function computeSongFontSize(verses) {
+    let size = Infinity;
+    for (const text of verses) {
+        if (!text || !text.trim()) continue;
+        const fit = measureFitSize(text);
+        if (fit !== null) size = Math.min(size, fit);
+    }
+    return size === Infinity ? null : size;
+}
+
+function applySongFontSize() {
+    if (songFontSize) {
+        elements.lyricsText.style.fontSize = songFontSize + 'px';
+    }
 }
 
 
@@ -126,18 +157,22 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
-// Re-fit when the projector window moves or the display resolution changes.
+// Recompute the song-wide size when the window moves or the resolution changes.
 let resizeRaf;
 window.addEventListener('resize', () => {
     cancelAnimationFrame(resizeRaf);
     resizeRaf = requestAnimationFrame(() => {
-        if (currentText) fitText(elements.lyricsText);
+        if (!currentVerses.length) return;
+        songFontSize = computeSongFontSize(currentVerses);
+        applySongFontSize();
     });
 });
 
-// The first verse can render before the web font loads; re-fit once it's ready.
+// The first verse can render before the web font loads; recompute once ready.
 if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(() => {
-        if (currentText) fitText(elements.lyricsText);
+        if (!currentVerses.length) return;
+        songFontSize = computeSongFontSize(currentVerses);
+        applySongFontSize();
     });
 }

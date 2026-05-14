@@ -313,7 +313,8 @@ async function sendToProjector() {
         title: state.currentSong.title,
         author: state.currentSong.author,
         musical_key: state.currentSong.musical_key,
-        songId: state.currentSong.id
+        songId: state.currentSong.id,
+        verses: state.currentSong.verses.map(v => v.text)
     };
 
     try {
