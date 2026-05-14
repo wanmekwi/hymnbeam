@@ -34,7 +34,7 @@ function updateDisplay(data) {
     setTimeout(() => {
         currentText = text;
         elements.lyricsText.textContent = text;
-        applyTextSizeClass(elements.lyricsText, text);
+        fitText(elements.lyricsText);
         elements.lyricsContainer.classList.remove('transitioning');
         elements.lyricsText.classList.add('entering');
         
@@ -68,28 +68,26 @@ function updateSongMeta(title, author, musical_key, songId) {
 }
 
 
-function applyTextSizeClass(element, text) {
-    element.classList.remove('size-xl', 'size-lg', 'size-md', 'size-sm', 'size-xs');
-    
-    const lineCount = (text.match(/\n/g) || []).length + 1;
-    const charCount = text.length;
-    const maxLineLength = Math.max(...text.split('\n').map(l => l.length));
-    
-    let sizeClass = 'size-xl';
-    
-    if (lineCount <= 2 && charCount <= 60) {
-        sizeClass = 'size-xl';
-    } else if (lineCount <= 4 && charCount <= 120 && maxLineLength <= 40) {
-        sizeClass = 'size-lg';
-    } else if (lineCount <= 6 && charCount <= 200 && maxLineLength <= 50) {
-        sizeClass = 'size-md';
-    } else if (lineCount <= 8 && charCount <= 300) {
-        sizeClass = 'size-sm';
-    } else {
-        sizeClass = 'size-xs';
-    }
-    
-    element.classList.add(sizeClass);
+const FILL_RATIO = 0.9;
+const MIN_FONT_PX = 16;
+
+// Scale the verse to fill ~90% of the screen on whichever axis binds first.
+// With `white-space: pre` the text never wraps, so its width and height both
+// scale linearly with font-size — one measurement at a base size is enough to
+// solve for the exact fit, no iteration needed.
+function fitText(element) {
+    const BASE = 100;
+    element.style.fontSize = BASE + 'px';
+
+    const naturalW = element.scrollWidth;
+    const naturalH = element.scrollHeight;
+    if (!naturalW || !naturalH) return;
+
+    const targetW = window.innerWidth * FILL_RATIO;
+    const targetH = window.innerHeight * FILL_RATIO;
+    const scale = Math.min(targetW / naturalW, targetH / naturalH);
+
+    element.style.fontSize = Math.max(MIN_FONT_PX, BASE * scale).toFixed(1) + 'px';
 }
 
 
@@ -125,3 +123,20 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('DOMContentLoaded', () => {
     elements.lyricsText.textContent = '';
 });
+
+
+// Re-fit when the projector window moves or the display resolution changes.
+let resizeRaf;
+window.addEventListener('resize', () => {
+    cancelAnimationFrame(resizeRaf);
+    resizeRaf = requestAnimationFrame(() => {
+        if (currentText) fitText(elements.lyricsText);
+    });
+});
+
+// The first verse can render before the web font loads; re-fit once it's ready.
+if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+        if (currentText) fitText(elements.lyricsText);
+    });
+}
