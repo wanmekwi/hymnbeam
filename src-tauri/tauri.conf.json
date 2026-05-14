@@ -5,8 +5,7 @@
   "identifier": "com.songrays.app",
   "build": {
     "frontendDist": "../frontend",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "cd backend && venv/bin/python3 main.py &",
+    "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },
   "app": {

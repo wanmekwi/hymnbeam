@@ -1,17 +1,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::Mutex;
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-#[cfg(not(debug_assertions))]
-use tauri_plugin_shell::ShellExt;
-#[cfg(not(debug_assertions))]
-use tauri_plugin_shell::process::CommandChild;
-#[cfg(debug_assertions)]
-#[allow(dead_code)]
-struct CommandChild;
+mod api;
+mod collections;
+mod db;
+mod export;
+mod import;
+mod models;
+mod songs;
 
-#[allow(dead_code)]
-struct BackendProcess(Mutex<Option<CommandChild>>);
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tokio::sync::OnceCell;
+
+static SERVER_PORT: OnceCell<u16> = OnceCell::const_new();
+
+#[tauri::command]
+fn get_api_port() -> u16 {
+    *SERVER_PORT.get().unwrap_or(&8765)
+}
 
 #[tauri::command]
 fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
@@ -60,28 +65,23 @@ fn send_to_projector(app: tauri::AppHandle, event: String, payload: String) -> R
 }
 
 fn main() {
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+
+    let port = rt.block_on(async {
+        db::set_db_path(db::init_db_path());
+        db::init_db().expect("Failed to initialize database");
+
+        let port = api::start_server().await.expect("Failed to start API server");
+        SERVER_PORT.set(port).ok();
+        port
+    });
+
+    println!("Song Rays API server running on http://127.0.0.1:{}", port);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .setup(|_app| {
-            // In production builds, launch the bundled backend sidecar.
-            // In dev mode the beforeDevCommand starts it instead.
-            #[cfg(not(debug_assertions))]
-            {
-                let sidecar = app.shell().sidecar("song-rays-backend")
-                    .map_err(|e| format!("sidecar not found: {e}"))?;
-                let (_rx, child) = sidecar
-                    .spawn()
-                    .map_err(|e| format!("failed to start backend: {e}"))?;
-                app.manage(BackendProcess(Mutex::new(Some(child))));
-            }
-            Ok(())
-        })
-        .on_window_event(|_window, event| {
-            // Backend process is cleaned up automatically when the managed
-            // CommandChild is dropped on app exit.
-            if let tauri::WindowEvent::Destroyed = event {}
-        })
         .invoke_handler(tauri::generate_handler![
+            get_api_port,
             open_projector_window,
             close_projector_window,
             send_to_projector

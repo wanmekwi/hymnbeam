@@ -1,4 +1,4 @@
-const API_URL = 'http://127.0.0.1:8765';
+let API_URL = 'http://127.0.0.1:8765';
 
 const state = {
     songs: [],
@@ -16,6 +16,17 @@ const state = {
     openCollection: null,   // currently open collection (full with songs)
     collectionPosition: -1, // index of active song in open collection
 };
+
+async function initApiUrl() {
+    if (window.__TAURI__) {
+        try {
+            const port = await window.__TAURI__.core.invoke('get_api_port');
+            API_URL = `http://127.0.0.1:${port}`;
+        } catch (e) {
+            console.warn('Could not get API port from Tauri, using default');
+        }
+    }
+}
 
 const elements = {
     searchInput: document.getElementById('searchInput'),
@@ -1118,7 +1129,8 @@ function initEventListeners() {
 }
 
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await initApiUrl();
     initEventListeners();
     fetchSongs();
     fetchCollections();
