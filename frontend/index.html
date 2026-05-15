@@ -3,19 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Song Rays — Operator</title>
+    <title>HymnBeam — Operator</title>
     <link rel="stylesheet" href="css/fonts.css">
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
     <div class="app">
         <header class="header">
-            <button class="logo" id="aboutBtn" type="button" title="About Song Rays">
-                <svg class="logo-icon" viewBox="0 0 32 32" fill="none">
-                    <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="1.5"/>
-                    <path d="M16 6v20M10 10l12 12M22 10L10 22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                </svg>
-                <span class="logo-text">Song Rays</span>
+            <button class="logo" id="aboutBtn" type="button" title="About HymnBeam">
+                <img class="logo-icon" src="img/hymnbeam-mark.png" alt="">
+                <span class="logo-text">HymnBeam</span>
             </button>
             <div class="header-controls">
                 <div class="export-wrapper">
@@ -45,6 +42,12 @@
                         <path d="M10 3v10m0 0l-3-3m3 3l3-3M3 14v2a2 2 0 002 2h10a2 2 0 002-2v-2"/>
                     </svg>
                     Import
+                </button>
+                <button class="btn btn-secondary btn-icon-only" id="settingsBtn" title="Display settings (⌘,)" aria-label="Display settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
                 </button>
                 <button class="btn btn-primary" id="projectorBtn">
                     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -223,35 +226,34 @@
                         </div>
                     </div>
 
-                    <div class="verse-navigator">
-                        <div class="verse-tabs" id="verseTabs"></div>
-                        <div class="quick-nav" id="quickNav"></div>
-                    </div>
+                    <div class="song-body">
+                        <div class="song-body-left">
+                            <div class="verse-navigator">
+                                <div class="verse-tabs" id="verseTabs"></div>
+                                <div class="quick-nav" id="quickNav"></div>
+                            </div>
 
-                    <div class="verse-display">
-                        <div class="verse-content" id="verseContent"></div>
-                    </div>
+                            <div class="verse-display">
+                                <div class="verse-content" id="verseContent"></div>
+                            </div>
+                        </div>
 
-                    <div class="preview-container">
-                        <div class="preview-label">Projector Preview</div>
-                        <div class="preview-window" id="previewWindow">
-                            <div class="preview-text" id="previewText"></div>
+                        <div class="song-body-right">
+                            <div class="preview-container">
+                                <div class="preview-label">Projector Preview</div>
+                                <div class="preview-window" id="previewWindow">
+                                    <div class="preview-text" id="previewText"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </section>
         </main>
 
-        <footer class="footer">
-            <div class="keyboard-hints">
-                <span><kbd>←</kbd><kbd>→</kbd> Navigate verses</span>
-                <span><kbd>Space</kbd> Blank screen</span>
-                <span><kbd>1</kbd>-<kbd>9</kbd> Jump to verse</span>
-                <span><kbd>Esc</kbd> Clear</span>
-            </div>
-            <div class="status" id="status">Ready</div>
-        </footer>
     </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <div class="modal-overlay" id="importModal">
         <div class="modal">
@@ -351,13 +353,154 @@ Second verse lyrics..."></textarea>
             </div>
             <div class="modal-body">
                 <div class="about-content">
-                    <svg class="about-logo" viewBox="0 0 32 32" fill="none">
-                        <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="1.5"/>
-                        <path d="M16 6v20M10 10l12 12M22 10L10 22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                    </svg>
-                    <div class="about-name">Song Rays</div>
+                    <img class="about-logo" src="img/hymnbeam-logo.png" alt="">
+                    <div class="about-name">HymnBeam</div>
                     <div class="about-version" id="aboutVersion">Version —</div>
                     <p class="about-desc">A church song projector for displaying lyrics to a congregation.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal modal-large settings-modal">
+            <div class="modal-header">
+                <h2>Display Settings</h2>
+                <button class="btn btn-icon modal-close" id="closeSettingsModal" title="Close" aria-label="Close modal">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M5 5l10 10M15 5L5 15"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body settings-body">
+                <div class="settings-tabs">
+                    <button type="button" class="settings-tab active" data-tab="typography">Typography</button>
+                    <button type="button" class="settings-tab" data-tab="background">Background</button>
+                    <button type="button" class="settings-tab" data-tab="layout">Layout</button>
+                    <button type="button" class="settings-tab" data-tab="transition">Transitions</button>
+                </div>
+
+                <div class="settings-content">
+                    <div class="settings-panel active" data-panel="typography">
+                        <div class="form-group">
+                            <label for="setFontFamily">Font</label>
+                            <select id="setFontFamily">
+                                <optgroup label="Sans-serif (bundled)">
+                                    <option value="Montserrat">Montserrat (default)</option>
+                                    <option value="Inter">Inter</option>
+                                </optgroup>
+                                <optgroup label="Serif (bundled)">
+                                    <option value="Lora">Lora</option>
+                                    <option value="EB Garamond">EB Garamond</option>
+                                    <option value="Crimson Pro">Crimson Pro</option>
+                                </optgroup>
+                                <optgroup label="Display (bundled)">
+                                    <option value="Playfair Display">Playfair Display</option>
+                                </optgroup>
+                                <optgroup label="System fallback">
+                                    <option value="system-sans">System Sans (SF)</option>
+                                    <option value="system-serif">System Serif (Georgia)</option>
+                                </optgroup>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="setFontWeight">Weight: <span class="value-readout" id="setFontWeightValue">600</span></label>
+                            <input type="range" id="setFontWeight" min="400" max="700" step="100" value="600">
+                        </div>
+                        <div class="form-group">
+                            <label>Alignment</label>
+                            <div class="segmented" id="setAlignment">
+                                <button type="button" data-value="left">Left</button>
+                                <button type="button" data-value="center" class="active">Center</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-panel" data-panel="background">
+                        <div class="form-group">
+                            <label>Background type</label>
+                            <div class="segmented" id="setBgKind">
+                                <button type="button" data-value="solid" class="active">Solid</button>
+                                <button type="button" data-value="gradient">Gradient</button>
+                                <button type="button" data-value="image">Image</button>
+                            </div>
+                        </div>
+                        <div class="form-group" id="setBgSolidGroup">
+                            <label for="setBgColor">Colour</label>
+                            <input type="color" id="setBgColor" value="#000000">
+                        </div>
+                        <div class="form-group hidden" id="setBgGradientGroup">
+                            <label>Gradient</label>
+                            <div class="gradient-row">
+                                <input type="color" id="setBgGradFrom" value="#000000" title="From">
+                                <input type="color" id="setBgGradTo" value="#1a1a2e" title="To">
+                            </div>
+                            <label class="sub-label">Angle: <span class="value-readout" id="setBgGradAngleValue">180°</span></label>
+                            <input type="range" id="setBgGradAngle" min="0" max="360" step="15" value="180">
+                        </div>
+                        <div class="form-group hidden" id="setBgImageGroup">
+                            <label>Image</label>
+                            <div class="image-picker">
+                                <div class="image-thumb" id="setBgImageThumb">
+                                    <span class="image-thumb-placeholder">No image</span>
+                                </div>
+                                <div class="image-picker-actions">
+                                    <button type="button" class="btn btn-secondary btn-small" id="setBgImageBrowseBtn">Choose image…</button>
+                                    <button type="button" class="btn btn-secondary btn-small" id="setBgImageRemoveBtn">Remove</button>
+                                    <input type="file" id="setBgImageInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                                </div>
+                            </div>
+                            <label class="sub-label">Dim overlay: <span class="value-readout" id="setBgImageDimValue">40%</span></label>
+                            <input type="range" id="setBgImageDim" min="0" max="80" step="5" value="40">
+                        </div>
+                    </div>
+
+                    <div class="settings-panel" data-panel="layout">
+                        <div class="form-group toggle-group">
+                            <label for="setShowTitleBar">Show song title bar</label>
+                            <input type="checkbox" id="setShowTitleBar" class="toggle" checked>
+                        </div>
+                        <div class="form-group toggle-group">
+                            <label for="setShowMetaBar">Show meta bar (#, key, author)</label>
+                            <input type="checkbox" id="setShowMetaBar" class="toggle" checked>
+                        </div>
+                        <div class="form-group toggle-group">
+                            <label for="setShowVerseLabel">Show verse label (Verse 1, Chorus…)</label>
+                            <input type="checkbox" id="setShowVerseLabel" class="toggle">
+                        </div>
+                        <div class="form-group">
+                            <label for="setSafeArea">Safe-area margin: <span class="value-readout" id="setSafeAreaValue">5%</span></label>
+                            <input type="range" id="setSafeArea" min="0" max="15" step="1" value="5">
+                            <span class="form-hint">Extra padding around the edges to keep text inside the safe screen area on older TVs.</span>
+                        </div>
+                    </div>
+
+                    <div class="settings-panel" data-panel="transition">
+                        <div class="form-group">
+                            <label>Style</label>
+                            <div class="segmented" id="setTransStyle">
+                                <button type="button" data-value="cut">Cut</button>
+                                <button type="button" data-value="fade">Fade</button>
+                                <button type="button" data-value="fade-up" class="active">Fade up</button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="setTransDuration">Duration: <span class="value-readout" id="setTransDurationValue">400 ms</span></label>
+                            <input type="range" id="setTransDuration" min="0" max="800" step="50" value="400">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-preview-wrap">
+                    <div class="settings-preview" id="settingsPreview">
+                        <div class="settings-preview-text">Sing to the Lord<br>a new song</div>
+                    </div>
+                    <span class="form-hint">Live preview. Changes apply to the projector as you edit.</span>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" id="settingsResetBtn">Reset to defaults</button>
+                    <button type="button" class="btn btn-primary" id="settingsDoneBtn">Done</button>
                 </div>
             </div>
         </div>

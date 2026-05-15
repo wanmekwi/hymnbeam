@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build, ad-hoc sign, and package Song Rays as a universal macOS app.
+# Build, ad-hoc sign, and package HymnBeam as a universal macOS app.
 #
 # Produces a universal (Apple Silicon + Intel) .app and .dmg under
 # src-tauri/target/universal-apple-darwin/release/bundle/.
@@ -52,6 +52,6 @@ echo
 echo "The app is ad-hoc signed, not notarized. After downloading, users must"
 echo "clear the Gatekeeper quarantine flag once:"
 echo
-echo "  xattr -dr com.apple.quarantine \"/Applications/Song Rays.app\""
+echo "  xattr -dr com.apple.quarantine \"/Applications/HymnBeam.app\""
 echo
 echo "or right-click the app -> Open the first time."

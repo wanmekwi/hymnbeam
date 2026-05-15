@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Song Rays",
+  "productName": "HymnBeam",
   "version": "0.1.0",
-  "identifier": "com.songrays.app",
+  "identifier": "com.hymnbeam.app",
   "build": {
     "frontendDist": "../frontend",
     "beforeDevCommand": "",
@@ -12,7 +12,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Song Rays — Operator",
+        "title": "HymnBeam — Operator",
         "label": "operator",
         "width": 1200,
         "height": 800,
@@ -33,8 +33,8 @@
     "targets": "all",
     "category": "public.app-category.productivity",
     "shortDescription": "Church song lyrics projector",
-    "longDescription": "Song Rays projects song lyrics to a screen for church congregations. Dual-window operator/projector layout, multi-monitor routing, keyboard-first control, and a portable SQLite song library.",
-    "copyright": "Copyright © 2026 Song Rays",
+    "longDescription": "HymnBeam projects song lyrics to a screen for church congregations. Dual-window operator/projector layout, multi-monitor routing, keyboard-first control, and a portable SQLite song library.",
+    "copyright": "Copyright © 2026 HymnBeam",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,6 +1,6 @@
-# Song Rays — Distribution Plan
+# HymnBeam — Distribution Plan
 
-Goal: turn Song Rays into an independent macOS app that can be downloaded from a
+Goal: turn HymnBeam into an independent macOS app that can be downloaded from a
 website and installed via Homebrew.
 
 ## Current state
@@ -20,7 +20,7 @@ several blockers guarantee a bundled `.app` would be broken.
    `shell:allow-open`, not `shell:allow-execute`.
 3. **DB path unwritable in a bundle** — `database.py` writes to a path inside the
    read-only `.app`. The packaged app cannot save songs. Must move to
-   `~/Library/Application Support/Song Rays/`.
+   `~/Library/Application Support/HymnBeam/`.
 4. **Startup race** — frontend hits hardcoded port 8765 immediately; no readiness
    check, no retry, dead if the port is taken.
 5. **Not a git repo** — releases, Homebrew tap, and CI need version control.
@@ -66,7 +66,7 @@ poll, build both arches) — viable but leaves signing fragile.
   `/songs`, `/songs/search`, `/songs/{id}` CRUD; `/import`, `/export`;
   `/collections/*`.
 - Port `database.py` → `rusqlite`, same schema + FTS5 virtual tables. DB path →
-  `~/Library/Application Support/Song Rays/songs.db` via `app_data_dir()`. Keep
+  `~/Library/Application Support/HymnBeam/songs.db` via `app_data_dir()`. Keep
   idempotent migrations.
 - Port `importer.py` and `export_songs.py`.
 - Bind `127.0.0.1:0` (OS-assigned port); pass port to frontend.
@@ -84,7 +84,7 @@ poll, build both arches) — viable but leaves signing fragile.
 - Universal binary: `cargo tauri build --target universal-apple-darwin`.
 - Verify `.dmg` / `.app` in `src-tauri/target/.../bundle/`.
 - Ad-hoc sign: `codesign --deep --force --sign -`. Document for users:
-  `xattr -dr com.apple.quarantine "/Applications/Song Rays.app"` or
+  `xattr -dr com.apple.quarantine "/Applications/HymnBeam.app"` or
   right-click → Open.
 - Upgrade path note: with a Developer ID, switch to signed + hardened runtime +
   `notarytool` + `stapler` to remove all Gatekeeper friction. Recommended
@@ -94,9 +94,9 @@ poll, build both arches) — viable but leaves signing fragile.
 - Push to GitHub, cut `v0.1.0` release with the universal DMG attached.
 - Optional GitHub Pages landing page: screenshots, download button, quarantine
   instructions.
-- Homebrew tap repo (`homebrew-songrays`) with `Casks/song-rays.rb` — `url` →
-  release DMG, `sha256`, `app "Song Rays.app"`, `postflight` to strip quarantine.
-  Install: `brew tap <you>/songrays && brew install --cask song-rays`.
+- Homebrew tap repo (`homebrew-hymnbeam`) with `Casks/hymnbeam.rb` — `url` →
+  release DMG, `sha256`, `app "HymnBeam.app"`, `postflight` to strip quarantine.
+  Install: `brew tap <you>/hymnbeam && brew install --cask hymnbeam`.
 - GitHub Actions: on tag, build universal binary, ad-hoc sign, attach DMG, bump
   cask `sha256`.
 

@@ -15,6 +15,32 @@ const state = {
     collections: [],        // all collection summaries
     openCollection: null,   // currently open collection (full with songs)
     collectionPosition: -1, // index of active song in open collection
+    settings: null,         // display settings (typography + background)
+};
+
+const DEFAULT_SETTINGS = {
+    typography: { fontFamily: 'Montserrat', fontWeight: 600, alignment: 'center' },
+    background: {
+        kind: 'solid',
+        color: '#000000',
+        gradient: { from: '#000000', to: '#1a1a2e', angle: 180 },
+        image: { filename: null, dim: 0.4 }
+    },
+    layout: { showTitleBar: true, showMetaBar: true, showVerseLabel: false, safeAreaPct: 5 },
+    transition: { style: 'fade-up', durationMs: 400 }
+};
+
+const FONT_STACKS = {
+    // Bundled (see frontend/fonts/NOTICES.md)
+    'Montserrat':       "'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif",
+    'Inter':            "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+    'Lora':             "'Lora', Georgia, 'Times New Roman', serif",
+    'EB Garamond':      "'EB Garamond', Garamond, Georgia, serif",
+    'Crimson Pro':      "'Crimson Pro', Georgia, 'Times New Roman', serif",
+    'Playfair Display': "'Playfair Display', Georgia, serif",
+    // System fallbacks
+    'system-sans':      "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    'system-serif':     "Georgia, 'Times New Roman', serif"
 };
 
 async function initApiUrl() {
@@ -64,7 +90,7 @@ const elements = {
     closeModal: document.getElementById('closeModal'),
     dropZone: document.getElementById('dropZone'),
     fileInput: document.getElementById('fileInput'),
-    status: document.getElementById('status'),
+    toast: document.getElementById('toast'),
     sortSelect: document.getElementById('sortSelect'),
     newSongBtn: document.getElementById('newSongBtn'),
     editSongBtn: document.getElementById('editSongBtn'),
@@ -88,6 +114,40 @@ const elements = {
     aboutModal: document.getElementById('aboutModal'),
     closeAboutModal: document.getElementById('closeAboutModal'),
     aboutVersion: document.getElementById('aboutVersion'),
+    settingsBtn: document.getElementById('settingsBtn'),
+    settingsModal: document.getElementById('settingsModal'),
+    closeSettingsModal: document.getElementById('closeSettingsModal'),
+    settingsDoneBtn: document.getElementById('settingsDoneBtn'),
+    settingsResetBtn: document.getElementById('settingsResetBtn'),
+    setFontFamily: document.getElementById('setFontFamily'),
+    setFontWeight: document.getElementById('setFontWeight'),
+    setFontWeightValue: document.getElementById('setFontWeightValue'),
+    setAlignment: document.getElementById('setAlignment'),
+    setBgKind: document.getElementById('setBgKind'),
+    setBgColor: document.getElementById('setBgColor'),
+    setBgSolidGroup: document.getElementById('setBgSolidGroup'),
+    setBgGradientGroup: document.getElementById('setBgGradientGroup'),
+    setBgGradFrom: document.getElementById('setBgGradFrom'),
+    setBgGradTo: document.getElementById('setBgGradTo'),
+    setBgGradAngle: document.getElementById('setBgGradAngle'),
+    setBgGradAngleValue: document.getElementById('setBgGradAngleValue'),
+    setBgImageGroup: document.getElementById('setBgImageGroup'),
+    setBgImageThumb: document.getElementById('setBgImageThumb'),
+    setBgImageBrowseBtn: document.getElementById('setBgImageBrowseBtn'),
+    setBgImageRemoveBtn: document.getElementById('setBgImageRemoveBtn'),
+    setBgImageInput: document.getElementById('setBgImageInput'),
+    setBgImageDim: document.getElementById('setBgImageDim'),
+    setBgImageDimValue: document.getElementById('setBgImageDimValue'),
+    setShowTitleBar: document.getElementById('setShowTitleBar'),
+    setShowMetaBar: document.getElementById('setShowMetaBar'),
+    setShowVerseLabel: document.getElementById('setShowVerseLabel'),
+    setSafeArea: document.getElementById('setSafeArea'),
+    setSafeAreaValue: document.getElementById('setSafeAreaValue'),
+    setTransStyle: document.getElementById('setTransStyle'),
+    setTransDuration: document.getElementById('setTransDuration'),
+    setTransDurationValue: document.getElementById('setTransDurationValue'),
+    settingsPreview: document.getElementById('settingsPreview'),
+    settingsPreviewText: document.querySelector('.settings-preview-text'),
 };
 
 
@@ -329,6 +389,7 @@ async function sendToProjector() {
     const currentVerse = state.currentSong.verses[state.currentVerseIndex];
     const payload = {
         text: state.isBlank ? '' : (currentVerse?.text || ''),
+        label: currentVerse?.label || '',
         isBlank: state.isBlank,
         title: state.currentSong.title,
         author: state.currentSong.author,
@@ -380,7 +441,10 @@ async function toggleProjector() {
                     </svg>
                     Close Projector
                 `;
-                setTimeout(sendToProjector, 500);
+                setTimeout(() => {
+                    sendToProjector();
+                    pushSettingsToProjector();
+                }, 500);
             }
         } else {
             const projectorWindow = window.open('projector.html', 'projector',
@@ -471,12 +535,17 @@ function closeImportModal() {
 }
 
 
+let toastTimer = null;
 function updateStatus(message) {
-    elements.status.textContent = message;
-    elements.status.classList.toggle('connected', message === 'connected');
-    if (message === 'connected') {
-        elements.status.textContent = 'Connected';
-    }
+    // "connected" is just an internal signal that the backend handshake
+    // succeeded — no need to surface it to the user.
+    if (!message || message === 'connected') return;
+
+    const toast = elements.toast;
+    toast.textContent = message;
+    toast.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('visible'), 2500);
 }
 
 
@@ -1011,6 +1080,314 @@ function toggleCollectionPicker() {
 }
 
 
+// ---------- Display settings ----------
+
+function mergeSettings(saved) {
+    const out = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    if (saved && typeof saved === 'object') {
+        if (saved.typography) Object.assign(out.typography, saved.typography);
+        if (saved.background) {
+            const savedGrad = saved.background.gradient;
+            const savedImage = saved.background.image;
+            Object.assign(out.background, saved.background);
+            if (savedGrad) Object.assign(out.background.gradient, savedGrad);
+            if (savedImage) Object.assign(out.background.image, savedImage);
+        }
+        if (saved.layout) Object.assign(out.layout, saved.layout);
+        if (saved.transition) Object.assign(out.transition, saved.transition);
+    }
+    return out;
+}
+
+async function loadSettings() {
+    try {
+        const res = await fetch(`${API_URL}/settings`);
+        if (!res.ok) throw new Error('Failed to load settings');
+        state.settings = mergeSettings(await res.json());
+    } catch (e) {
+        console.warn('Settings load failed, using defaults', e);
+        state.settings = mergeSettings(null);
+    }
+}
+
+let saveSettingsTimer = null;
+function scheduleSaveSettings() {
+    clearTimeout(saveSettingsTimer);
+    saveSettingsTimer = setTimeout(async () => {
+        try {
+            await fetch(`${API_URL}/settings`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(state.settings)
+            });
+        } catch (e) {
+            console.error('Settings save failed', e);
+        }
+    }, 250);
+}
+
+function pushSettingsToProjector() {
+    if (!window.__TAURI__ || !state.projectorOpen) return;
+    window.__TAURI__.core.invoke('send_to_projector', {
+        event: 'apply-settings',
+        payload: JSON.stringify(state.settings)
+    }).catch(err => console.error('Failed to push settings:', err));
+}
+
+function bgCssForSettings(s) {
+    const bg = s.background;
+    if (bg.kind === 'gradient') {
+        return `linear-gradient(${bg.gradient.angle}deg, ${bg.gradient.from}, ${bg.gradient.to})`;
+    }
+    if (bg.kind === 'image' && bg.image.filename) {
+        const url = `${API_URL}/backgrounds/${encodeURIComponent(bg.image.filename)}`;
+        const dim = Math.max(0, Math.min(1, bg.image.dim));
+        return `linear-gradient(rgba(0,0,0,${dim}), rgba(0,0,0,${dim})), url('${url}') center/cover no-repeat`;
+    }
+    return bg.color;
+}
+
+function updateSettingsPreview() {
+    const s = state.settings;
+    elements.settingsPreview.style.background = bgCssForSettings(s);
+    const text = elements.settingsPreviewText;
+    text.style.fontFamily = FONT_STACKS[s.typography.fontFamily] || FONT_STACKS['Montserrat'];
+    text.style.fontWeight = s.typography.fontWeight;
+    text.style.textAlign = s.typography.alignment;
+}
+
+function syncSettingsForm() {
+    const s = state.settings;
+    elements.setFontFamily.value = s.typography.fontFamily;
+    elements.setFontWeight.value = s.typography.fontWeight;
+    elements.setFontWeightValue.textContent = s.typography.fontWeight;
+    elements.setAlignment.querySelectorAll('button').forEach(b => {
+        b.classList.toggle('active', b.dataset.value === s.typography.alignment);
+    });
+
+    elements.setBgKind.querySelectorAll('button').forEach(b => {
+        b.classList.toggle('active', b.dataset.value === s.background.kind);
+    });
+    elements.setBgSolidGroup.classList.toggle('hidden', s.background.kind !== 'solid');
+    elements.setBgGradientGroup.classList.toggle('hidden', s.background.kind !== 'gradient');
+    elements.setBgImageGroup.classList.toggle('hidden', s.background.kind !== 'image');
+    elements.setBgColor.value = s.background.color;
+    elements.setBgGradFrom.value = s.background.gradient.from;
+    elements.setBgGradTo.value = s.background.gradient.to;
+    elements.setBgGradAngle.value = s.background.gradient.angle;
+    elements.setBgGradAngleValue.textContent = `${s.background.gradient.angle}°`;
+    syncBgImageThumb();
+    const dimPct = Math.round(s.background.image.dim * 100);
+    elements.setBgImageDim.value = dimPct;
+    elements.setBgImageDimValue.textContent = `${dimPct}%`;
+
+    elements.setShowTitleBar.checked = s.layout.showTitleBar;
+    elements.setShowMetaBar.checked = s.layout.showMetaBar;
+    elements.setShowVerseLabel.checked = s.layout.showVerseLabel;
+    elements.setSafeArea.value = s.layout.safeAreaPct;
+    elements.setSafeAreaValue.textContent = `${s.layout.safeAreaPct}%`;
+
+    elements.setTransStyle.querySelectorAll('button').forEach(b => {
+        b.classList.toggle('active', b.dataset.value === s.transition.style);
+    });
+    elements.setTransDuration.value = s.transition.durationMs;
+    elements.setTransDurationValue.textContent = `${s.transition.durationMs} ms`;
+}
+
+function syncBgImageThumb() {
+    const fn = state.settings.background.image.filename;
+    if (fn) {
+        const url = `${API_URL}/backgrounds/${encodeURIComponent(fn)}`;
+        elements.setBgImageThumb.style.backgroundImage = `url('${url}')`;
+        elements.setBgImageThumb.innerHTML = '';
+    } else {
+        elements.setBgImageThumb.style.backgroundImage = '';
+        elements.setBgImageThumb.innerHTML = '<span class="image-thumb-placeholder">No image</span>';
+    }
+}
+
+async function uploadBackgroundImage(file) {
+    const form = new FormData();
+    form.append('image', file, file.name);
+    const res = await fetch(`${API_URL}/backgrounds`, { method: 'POST', body: form });
+    if (!res.ok) throw new Error('upload failed');
+    const data = await res.json();
+    return data.filename;
+}
+
+function onSettingsChanged() {
+    updateSettingsPreview();
+    pushSettingsToProjector();
+    scheduleSaveSettings();
+}
+
+function openSettingsModal() {
+    syncSettingsForm();
+    updateSettingsPreview();
+    elements.settingsModal.classList.add('active');
+}
+
+function closeSettingsModal() {
+    elements.settingsModal.classList.remove('active');
+}
+
+function initSettingsDialog() {
+    elements.settingsBtn.addEventListener('click', openSettingsModal);
+    elements.closeSettingsModal.addEventListener('click', closeSettingsModal);
+    elements.settingsDoneBtn.addEventListener('click', closeSettingsModal);
+    elements.settingsModal.addEventListener('click', (e) => {
+        if (e.target === elements.settingsModal) closeSettingsModal();
+    });
+
+    if (window.__TAURI__) {
+        window.__TAURI__.event.listen('open-settings', () => openSettingsModal());
+    }
+
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.settings-panel').forEach(p => p.classList.remove('active'));
+            tab.classList.add('active');
+            document.querySelector(`.settings-panel[data-panel="${tab.dataset.tab}"]`).classList.add('active');
+        });
+    });
+
+    elements.setFontFamily.addEventListener('change', () => {
+        state.settings.typography.fontFamily = elements.setFontFamily.value;
+        onSettingsChanged();
+    });
+    elements.setFontWeight.addEventListener('input', () => {
+        state.settings.typography.fontWeight = parseInt(elements.setFontWeight.value, 10);
+        elements.setFontWeightValue.textContent = state.settings.typography.fontWeight;
+        onSettingsChanged();
+    });
+    elements.setAlignment.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', () => {
+            state.settings.typography.alignment = b.dataset.value;
+            syncSettingsForm();
+            onSettingsChanged();
+        });
+    });
+
+    elements.setBgKind.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', () => {
+            state.settings.background.kind = b.dataset.value;
+            syncSettingsForm();
+            onSettingsChanged();
+        });
+    });
+    elements.setBgColor.addEventListener('input', () => {
+        state.settings.background.color = elements.setBgColor.value;
+        onSettingsChanged();
+    });
+    elements.setBgGradFrom.addEventListener('input', () => {
+        state.settings.background.gradient.from = elements.setBgGradFrom.value;
+        onSettingsChanged();
+    });
+    elements.setBgGradTo.addEventListener('input', () => {
+        state.settings.background.gradient.to = elements.setBgGradTo.value;
+        onSettingsChanged();
+    });
+    elements.setBgGradAngle.addEventListener('input', () => {
+        state.settings.background.gradient.angle = parseInt(elements.setBgGradAngle.value, 10);
+        elements.setBgGradAngleValue.textContent = `${state.settings.background.gradient.angle}°`;
+        onSettingsChanged();
+    });
+
+    // Background image
+    elements.setBgImageBrowseBtn.addEventListener('click', () => elements.setBgImageInput.click());
+    elements.setBgImageInput.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        try {
+            const filename = await uploadBackgroundImage(file);
+            state.settings.background.image.filename = filename;
+            state.settings.background.kind = 'image';
+            syncSettingsForm();
+            onSettingsChanged();
+        } catch (err) {
+            console.error('Image upload failed', err);
+            updateStatus('Image upload failed');
+        }
+    });
+    elements.setBgImageRemoveBtn.addEventListener('click', () => {
+        state.settings.background.image.filename = null;
+        if (state.settings.background.kind === 'image') {
+            state.settings.background.kind = 'solid';
+        }
+        syncSettingsForm();
+        onSettingsChanged();
+    });
+    elements.setBgImageDim.addEventListener('input', () => {
+        const pct = parseInt(elements.setBgImageDim.value, 10);
+        state.settings.background.image.dim = pct / 100;
+        elements.setBgImageDimValue.textContent = `${pct}%`;
+        onSettingsChanged();
+    });
+
+    // Layout
+    const wireToggle = (el, path) => {
+        el.addEventListener('change', () => {
+            state.settings.layout[path] = el.checked;
+            onSettingsChanged();
+        });
+    };
+    wireToggle(elements.setShowTitleBar, 'showTitleBar');
+    wireToggle(elements.setShowMetaBar, 'showMetaBar');
+    wireToggle(elements.setShowVerseLabel, 'showVerseLabel');
+    elements.setSafeArea.addEventListener('input', () => {
+        const pct = parseInt(elements.setSafeArea.value, 10);
+        state.settings.layout.safeAreaPct = pct;
+        elements.setSafeAreaValue.textContent = `${pct}%`;
+        onSettingsChanged();
+    });
+
+    // Transitions
+    elements.setTransStyle.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', () => {
+            state.settings.transition.style = b.dataset.value;
+            syncSettingsForm();
+            onSettingsChanged();
+        });
+    });
+    elements.setTransDuration.addEventListener('input', () => {
+        const ms = parseInt(elements.setTransDuration.value, 10);
+        state.settings.transition.durationMs = ms;
+        elements.setTransDurationValue.textContent = `${ms} ms`;
+        onSettingsChanged();
+    });
+
+    elements.settingsResetBtn.addEventListener('click', () => {
+        state.settings = mergeSettings(null);
+        syncSettingsForm();
+        onSettingsChanged();
+    });
+}
+
+// Map native menu items to existing UI actions.
+function initMenuEvents() {
+    if (!window.__TAURI__) return;
+    const on = (name, fn) => window.__TAURI__.event.listen(name, fn);
+
+    on('menu-new-song', () => openEditModal());
+    on('menu-import', () => openImportModal());
+    on('menu-export-json', () => exportSongs('json'));
+    on('menu-export-csv', () => exportSongs('csv'));
+    on('menu-export-txt', () => exportSongs('txt'));
+    on('menu-edit-song', () => {
+        if (state.currentSong) openEditModal(state.currentSong);
+        else updateStatus('Select a song first');
+    });
+    on('menu-delete-song', () => {
+        if (state.currentSong) openDeleteConfirm();
+        else updateStatus('Select a song first');
+    });
+    on('menu-toggle-projector', () => toggleProjector());
+    on('menu-blank-screen', () => toggleBlank());
+}
+
+
 function initEventListeners() {
     let searchTimeout;
     elements.searchInput.addEventListener('input', (e) => {
@@ -1117,6 +1494,10 @@ function initEventListeners() {
             case '6': case '7': case '8': case '9':
                 jumpToVerse(parseInt(e.key) - 1);
                 break;
+            case '0':
+                // 0 jumps to the 10th verse, matching the common tab-switcher convention.
+                jumpToVerse(9);
+                break;
             case 'f':
             case 'F':
                 if (!state.projectorOpen) toggleProjector();
@@ -1178,6 +1559,8 @@ function initEventListeners() {
 document.addEventListener('DOMContentLoaded', async () => {
     await initApiUrl();
     initEventListeners();
+    initSettingsDialog();
+    initMenuEvents();
 
     const ready = await waitForBackend();
     if (!ready) {
@@ -1185,6 +1568,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
+    await loadSettings();
     fetchSongs();
     fetchCollections();
 });

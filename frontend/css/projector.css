@@ -2,6 +2,8 @@
     --bg-color: #000000;
     --text-color: #ffffff;
     --font-display: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --safe-area: 0px;
+    --trans-duration: 400ms;
 }
 
 * {
@@ -30,9 +32,13 @@ body {
     align-items: center;
     justify-content: center;
     position: relative;
-    background: 
-        radial-gradient(ellipse 100% 60% at 50% 100%, rgba(30, 25, 15, 0.4), transparent 70%),
-        var(--bg-color);
+    padding: var(--safe-area);
+    background: var(--bg-color);
+}
+
+.projector.layout-hide-title .song-title-bar,
+.projector.layout-hide-meta .song-meta-bar {
+    display: none;
 }
 
 .song-title-bar {
@@ -131,13 +137,47 @@ body {
     text-align: center;
     opacity: 1;
     transform: translateY(0);
-    transition: 
-        opacity 400ms cubic-bezier(0.4, 0, 0.2, 1),
-        transform 400ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition:
+        opacity var(--trans-duration) cubic-bezier(0.4, 0, 0.2, 1),
+        transform var(--trans-duration) cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     align-items: center;
     justify-content: center;
     flex: 1;
+}
+
+.lyrics-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: inherit;
+    gap: 0.4em;
+    width: max-content;
+    max-width: 100%;
+}
+
+.verse-label {
+    display: none;
+    font-family: var(--font-display);
+    font-size: clamp(14px, 1.6vw, 22px);
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.55);
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.verse-label.visible {
+    display: block;
+}
+
+.projector.transition-cut .lyrics-container {
+    transition: none;
+}
+
+.projector.transition-fade .lyrics-container.transitioning,
+.projector.transition-cut .lyrics-container.transitioning {
+    opacity: 0;
+    transform: none;
 }
 
 .lyrics-container.transitioning {
@@ -188,5 +228,10 @@ body {
 }
 
 .lyrics-text.entering {
-    animation: fadeInUp 500ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    animation: fadeInUp var(--trans-duration) cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.projector.transition-fade .lyrics-text.entering,
+.projector.transition-cut .lyrics-text.entering {
+    animation: none;
 }

@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for Song Rays","local":true,"windows":["operator","projector"],"permissions":["core:default","shell:allow-open"]}}
+{"default":{"identifier":"default","description":"Default capabilities for HymnBeam","local":true,"windows":["operator","projector"],"permissions":["core:default","shell:allow-open"]}}

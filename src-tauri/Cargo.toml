@@ -1,8 +1,8 @@
 [package]
-name = "song-rays"
+name = "hymnbeam"
 version = "0.1.0"
-description = "Church Song Projector"
-authors = ["Song Rays Team"]
+description = "Church song lyrics projector"
+authors = ["HymnBeam"]
 license = "MIT"
 repository = ""
 edition = "2021"

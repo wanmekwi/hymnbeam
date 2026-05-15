@@ -1,6 +1,6 @@
-# Song Rays
+# HymnBeam
 
-A cross-platform desktop app for projecting song lyrics to a screen for church congregations. Built with Tauri, Python FastAPI, and SQLite.
+A cross-platform desktop app for projecting song lyrics to a screen for church congregations. Built with Tauri (Rust) + an embedded `axum` HTTP server + SQLite.
 
 ## Features
 
@@ -112,7 +112,7 @@ More lyrics...
 ## Project Structure
 
 ```
-song_rays/
+hymnbeam/
 ├── src-tauri/          # Tauri/Rust shell
 │   ├── src/main.rs     # Window management, IPC
 │   └── tauri.conf.json # App configuration
@@ -146,13 +146,13 @@ For a single-arch local build you can still run `cd src-tauri && cargo tauri bui
 
 The app is ad-hoc signed but not notarized (no Apple Developer ID yet), so
 after downloading the `.dmg` macOS Gatekeeper will quarantine it. Drag
-**Song Rays** to `/Applications`, then either:
+**HymnBeam** to `/Applications`, then either:
 
 - Right-click the app → **Open**, and confirm once, **or**
 - clear the quarantine flag from a terminal:
 
   ```bash
-  xattr -dr com.apple.quarantine "/Applications/Song Rays.app"
+  xattr -dr com.apple.quarantine "/Applications/HymnBeam.app"
   ```
 
 This is a one-time step per download.

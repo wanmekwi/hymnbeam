@@ -14,9 +14,11 @@ use crate::collections::{
     add_song_to_collection, create_collection, delete_collection, get_all_collections,
     get_collection, remove_song_from_collection, rename_collection, reorder_collection_songs,
 };
+use crate::backgrounds::{read_image, save_image};
 use crate::export::{export_csv, export_json, export_txt};
 use crate::import::import_file;
 use crate::models::Song;
+use crate::settings::{get_settings, update_settings};
 use crate::songs::{create_song, delete_song, get_all_songs, get_song, search_songs, update_song};
 
 #[derive(Serialize)]
@@ -100,7 +102,7 @@ struct ReorderBody {
 async fn root() -> Json<StatusResponse> {
     Json(StatusResponse {
         status: "ok",
-        app: "Song Rays",
+        app: "HymnBeam",
     })
 }
 
@@ -311,6 +313,56 @@ async fn reorder_col_songs(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+#[derive(Serialize)]
+struct UploadResponse {
+    filename: String,
+}
+
+async fn upload_background(mut multipart: Multipart) -> Result<impl IntoResponse, StatusCode> {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+    {
+        let filename = field
+            .file_name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "image.png".to_string());
+
+        let content = field
+            .bytes()
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+        let saved = save_image(&filename, &content).map_err(|_| StatusCode::BAD_REQUEST)?;
+        return Ok(Json(UploadResponse { filename: saved }));
+    }
+    Err(StatusCode::BAD_REQUEST)
+}
+
+async fn serve_background(Path(name): Path<String>) -> Result<Response, StatusCode> {
+    let (bytes, content_type) = read_image(&name).map_err(|_| StatusCode::NOT_FOUND)?;
+    Response::builder()
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "public, max-age=86400")
+        .body(Body::from(bytes))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn get_app_settings() -> Result<impl IntoResponse, StatusCode> {
+    get_settings()
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn put_app_settings(
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, StatusCode> {
+    update_settings(&body)
+        .map(|_| Json(MessageResponse { message: "Saved" }))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 pub fn create_router() -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -342,6 +394,9 @@ pub fn create_router() -> Router {
             delete(remove_song_from_col),
         )
         .route("/collections/{collection_id}/reorder", put(reorder_col_songs))
+        .route("/settings", get(get_app_settings).put(put_app_settings))
+        .route("/backgrounds", post(upload_background))
+        .route("/backgrounds/{name}", get(serve_background))
         .layer(cors)
 }
 

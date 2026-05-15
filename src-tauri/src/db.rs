@@ -7,11 +7,16 @@ static DB_PATH: OnceCell<PathBuf> = OnceCell::new();
 static DB_POOL: OnceCell<Mutex<Connection>> = OnceCell::new();
 
 pub fn init_db_path() -> PathBuf {
-    let app_support = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Song Rays");
-    std::fs::create_dir_all(&app_support).ok();
-    app_support.join("songs.db")
+    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+    let new_dir = base.join("HymnBeam");
+    let old_dir = base.join("Song Rays");
+    // One-time migration of the pre-rename data directory. Only happens when
+    // the old name exists and the new one hasn't been created yet.
+    if old_dir.exists() && !new_dir.exists() {
+        let _ = std::fs::rename(&old_dir, &new_dir);
+    }
+    std::fs::create_dir_all(&new_dir).ok();
+    new_dir.join("songs.db")
 }
 
 pub fn set_db_path(path: PathBuf) {
@@ -84,6 +89,11 @@ pub fn init_db() -> SqliteResult<()> {
 
         CREATE INDEX IF NOT EXISTS idx_songs_title ON songs(title);
         CREATE INDEX IF NOT EXISTS idx_verses_song_id ON verses(song_id);
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            data TEXT NOT NULL
+        );
         "#,
     )?;
 
