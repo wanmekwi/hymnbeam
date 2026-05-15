@@ -5,7 +5,10 @@ use rusqlite::params;
 fn get_sort_clause(sort_by: &str) -> &'static str {
     match sort_by {
         "title" => "s.title ASC",
-        "number" => "s.id ASC",
+        // Numbered songs first (in numeric order), then anything without a
+        // song_number falls back to insertion order.
+        "number" => "(s.song_number IS NULL OR s.song_number = '') ASC, \
+                     CAST(s.song_number AS INTEGER) ASC, s.song_number ASC, s.id ASC",
         "key" => "s.musical_key ASC, s.title ASC",
         "author" => "s.author ASC, s.title ASC",
         "recent" => "s.id DESC",
@@ -17,8 +20,8 @@ pub fn create_song(song: &Song) -> Result<i64, String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
 
     conn.execute(
-        "INSERT INTO songs (title, author, musical_key) VALUES (?1, ?2, ?3)",
-        params![song.title, song.author, song.musical_key],
+        "INSERT INTO songs (title, author, musical_key, song_number) VALUES (?1, ?2, ?3, ?4)",
+        params![song.title, song.author, song.musical_key, song.song_number],
     )
     .map_err(|e| e.to_string())?;
 
@@ -68,13 +71,14 @@ pub fn create_song(song: &Song) -> Result<i64, String> {
 pub fn get_song(song_id: i64) -> Result<Option<Song>, String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
 
-    let song_result: Result<(String, Option<String>, Option<String>), _> = conn.query_row(
-        "SELECT title, author, musical_key FROM songs WHERE id = ?1",
-        params![song_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    );
+    let song_result: Result<(String, Option<String>, Option<String>, Option<String>), _> =
+        conn.query_row(
+            "SELECT title, author, musical_key, song_number FROM songs WHERE id = ?1",
+            params![song_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        );
 
-    let (title, author, musical_key) = match song_result {
+    let (title, author, musical_key, song_number) = match song_result {
         Ok(s) => s,
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
         Err(e) => return Err(e.to_string()),
@@ -114,6 +118,7 @@ pub fn get_song(song_id: i64) -> Result<Option<Song>, String> {
         title,
         author,
         musical_key,
+        song_number,
         verses,
         tags,
     }))
@@ -125,7 +130,7 @@ pub fn get_all_songs(sort_by: &str) -> Result<Vec<SongSummary>, String> {
 
     let query = format!(
         r#"
-        SELECT s.id, s.title, s.author, s.musical_key, COUNT(v.id) as verse_count
+        SELECT s.id, s.title, s.author, s.musical_key, s.song_number, COUNT(v.id) as verse_count
         FROM songs s
         LEFT JOIN verses v ON s.id = v.song_id
         GROUP BY s.id
@@ -143,7 +148,8 @@ pub fn get_all_songs(sort_by: &str) -> Result<Vec<SongSummary>, String> {
                 title: row.get(1)?,
                 author: row.get(2)?,
                 musical_key: row.get(3)?,
-                verse_count: row.get(4)?,
+                song_number: row.get(4)?,
+                verse_count: row.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -160,7 +166,7 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
 
     let fts_query = format!(
         r#"
-        SELECT DISTINCT s.id, s.title, s.author, s.musical_key, COUNT(v.id) as verse_count
+        SELECT DISTINCT s.id, s.title, s.author, s.musical_key, s.song_number, COUNT(v.id) as verse_count
         FROM songs s
         LEFT JOIN verses v ON s.id = v.song_id
         WHERE s.id IN (
@@ -187,7 +193,8 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
                 title: row.get(1)?,
                 author: row.get(2)?,
                 musical_key: row.get(3)?,
-                verse_count: row.get(4)?,
+                song_number: row.get(4)?,
+                verse_count: row.get(5)?,
             })
         })?;
         rows.collect()
@@ -202,12 +209,13 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
     let like_term = format!("%{}%", query);
     let fallback_query = format!(
         r#"
-        SELECT DISTINCT s.id, s.title, s.author, s.musical_key, COUNT(v.id) as verse_count
+        SELECT DISTINCT s.id, s.title, s.author, s.musical_key, s.song_number, COUNT(v.id) as verse_count
         FROM songs s
         LEFT JOIN verses v ON s.id = v.song_id
         WHERE s.title LIKE ?1 COLLATE NOCASE
            OR s.author LIKE ?1 COLLATE NOCASE
            OR s.musical_key LIKE ?1 COLLATE NOCASE
+           OR s.song_number LIKE ?1
            OR CAST(s.id AS TEXT) LIKE ?1
            OR EXISTS (SELECT 1 FROM verses v2 WHERE v2.song_id = s.id AND v2.text LIKE ?1 COLLATE NOCASE)
         GROUP BY s.id
@@ -224,7 +232,8 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
                 title: row.get(1)?,
                 author: row.get(2)?,
                 musical_key: row.get(3)?,
-                verse_count: row.get(4)?,
+                song_number: row.get(4)?,
+                verse_count: row.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -239,8 +248,8 @@ pub fn update_song(song_id: i64, song: &Song) -> Result<bool, String> {
 
     let rows_updated = conn
         .execute(
-            "UPDATE songs SET title = ?1, author = ?2, musical_key = ?3, updated_at = CURRENT_TIMESTAMP WHERE id = ?4",
-            params![song.title, song.author, song.musical_key, song_id],
+            "UPDATE songs SET title = ?1, author = ?2, musical_key = ?3, song_number = ?4, updated_at = CURRENT_TIMESTAMP WHERE id = ?5",
+            params![song.title, song.author, song.musical_key, song.song_number, song_id],
         )
         .map_err(|e| e.to_string())?;
 

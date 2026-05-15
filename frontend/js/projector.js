@@ -117,7 +117,7 @@ document.body.appendChild(measureEl);
 
 
 function updateDisplay(data) {
-    const { text, label, isBlank, title, author, musical_key, songId, verses } = data;
+    const { text, label, isBlank, title, author, musical_key, songId, songNumber, verses } = data;
 
     if (isBlank) {
         elements.blankScreen.classList.add('active');
@@ -130,7 +130,7 @@ function updateDisplay(data) {
 
     if (songId !== currentSongId) {
         currentSongId = songId;
-        updateSongMeta(title, author, musical_key, songId);
+        updateSongMeta(title, author, musical_key, songNumber || songId);
         currentVerses = verses && verses.length ? verses : (text ? [text] : []);
         songFontSize = computeSongFontSize(currentVerses);
     }
@@ -159,26 +159,31 @@ function updateDisplay(data) {
 }
 
 
-function updateSongMeta(title, author, musical_key, songId) {
+function updateSongMeta(title, author, musical_key, songNumber) {
     elements.songTitleBar.textContent = title || '';
     elements.songTitleBar.classList.toggle('visible', !!title);
-    
-    const hasAnyMeta = songId || musical_key || author;
-    
+
+    const number = songNumber != null && songNumber !== '' ? String(songNumber) : '';
+    const hasAnyMeta = number || musical_key || author;
+
+    const escape = (s) => String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+
     let metaHtml = `
         <div class="meta-col">
-            ${songId ? `<span class="meta-label">#</span><span class="meta-value">${songId}</span>` : ''}
+            ${number ? `<span class="meta-label">#</span><span class="meta-value">${escape(number)}</span>` : ''}
         </div>
         <div class="meta-col">
-            ${musical_key ? `<span class="meta-label">Key:</span><span class="meta-value">${musical_key}</span>` : ''}
+            ${musical_key ? `<span class="meta-label">Key:</span><span class="meta-value">${escape(musical_key)}</span>` : ''}
         </div>
         <div class="meta-col">
-            ${author ? `<span class="meta-value">${author}</span>` : ''}
+            ${author ? `<span class="meta-value">${escape(author)}</span>` : ''}
         </div>
     `;
-    
+
     elements.songMetaBar.innerHTML = metaHtml;
-    elements.songMetaBar.classList.toggle('visible', hasAnyMeta);
+    elements.songMetaBar.classList.toggle('visible', !!hasAnyMeta);
 }
 
 

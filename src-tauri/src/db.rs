@@ -36,6 +36,26 @@ pub fn get_connection() -> SqliteResult<std::sync::MutexGuard<'static, Connectio
     Ok(pool.lock().unwrap())
 }
 
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> SqliteResult<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let exists = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .any(|name| name == column);
+    if !exists {
+        conn.execute(
+            &format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, definition),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn init_db() -> SqliteResult<()> {
     let conn = get_connection()?;
 
@@ -46,6 +66,7 @@ pub fn init_db() -> SqliteResult<()> {
             title TEXT NOT NULL,
             author TEXT,
             musical_key TEXT,
+            song_number TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -95,6 +116,13 @@ pub fn init_db() -> SqliteResult<()> {
             data TEXT NOT NULL
         );
         "#,
+    )?;
+
+    // Migration for databases created before song_number existed as a column.
+    // Must run before any index that references the column.
+    add_column_if_missing(&conn, "songs", "song_number", "TEXT")?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_songs_number ON songs(song_number);",
     )?;
 
     conn.execute_batch(

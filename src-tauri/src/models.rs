@@ -1,4 +1,22 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+// Some hymnal exports store the hymn number as a JSON integer, others as a
+// string — accept either and normalise to Option<String>. Without this, serde
+// silently rejects the entire record on a type mismatch, which is how the
+// 251123_Hymns.json file lost ~1100 of its entries.
+fn deserialize_stringy_optional<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde_json::Value;
+    let v: Option<Value> = Option::deserialize(d)?;
+    Ok(v.and_then(|val| match val {
+        Value::String(s) if !s.is_empty() => Some(s),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Verse {
@@ -19,6 +37,8 @@ pub struct Song {
     pub author: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub musical_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub song_number: Option<String>,
     #[serde(default)]
     pub verses: Vec<Verse>,
     #[serde(default)]
@@ -33,6 +53,8 @@ pub struct SongSummary {
     pub author: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub musical_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub song_number: Option<String>,
     pub verse_count: i32,
 }
 
@@ -72,9 +94,9 @@ pub struct ImportedHymn {
     pub author: Option<String>,
     #[serde(default)]
     pub lyrics: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_stringy_optional")]
     pub musical_key: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_stringy_optional")]
     pub song_number: Option<String>,
     #[serde(default)]
     pub verses: Option<Vec<ImportedVerse>>,

@@ -1,8 +1,60 @@
+use crate::db::get_connection;
 use crate::models::{ImportedHymn, Song, Verse};
 use crate::songs::create_song;
 use regex::Regex;
+use rusqlite::params;
 use std::collections::HashMap;
 use std::path::Path;
+
+// Fingerprint = title + each verse's text, joined by NUL. NUL can't appear in
+// SQLite TEXT values, so collisions only happen on genuinely identical songs.
+fn fingerprint(title: &str, verses: &[Verse]) -> String {
+    let mut fp = String::with_capacity(title.len() + 64);
+    fp.push_str(title.trim());
+    for v in verses {
+        fp.push('\0');
+        fp.push_str(v.text.trim());
+    }
+    fp
+}
+
+// Returns the id of an existing song whose (title, verse-texts) fingerprint
+// matches `song`, so re-imports of the same file don't duplicate rows.
+fn find_existing_song_id(song: &Song) -> Result<Option<i64>, String> {
+    let conn = get_connection().map_err(|e| e.to_string())?;
+    let target = fingerprint(&song.title, &song.verses);
+
+    let mut stmt = conn
+        .prepare("SELECT id FROM songs WHERE title = ?1")
+        .map_err(|e| e.to_string())?;
+    let candidate_ids: Vec<i64> = stmt
+        .query_map(params![song.title], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    for sid in candidate_ids {
+        let mut vstmt = conn
+            .prepare("SELECT label, text FROM verses WHERE song_id = ?1 ORDER BY position")
+            .map_err(|e| e.to_string())?;
+        let existing_verses: Vec<Verse> = vstmt
+            .query_map(params![sid], |row| {
+                Ok(Verse {
+                    id: None,
+                    label: row.get(0)?,
+                    text: row.get(1)?,
+                    position: None,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        if fingerprint(&song.title, &existing_verses) == target {
+            return Ok(Some(sid));
+        }
+    }
+    Ok(None)
+}
 
 fn parse_lyrics_to_verses(lyrics: &str) -> Vec<Verse> {
     if lyrics.trim().is_empty() {
@@ -135,19 +187,21 @@ fn import_single_hymn(hymn: &ImportedHymn) -> Result<i64, String> {
         Vec::new()
     };
 
-    let mut tags = hymn.tags.clone().unwrap_or_default();
-    if let Some(ref song_number) = hymn.song_number {
-        tags.push(format!("#{}", song_number));
-    }
+    let tags = hymn.tags.clone().unwrap_or_default();
 
     let song = Song {
         id: None,
         title: hymn.title.clone(),
         author: hymn.author.clone().filter(|a| !a.is_empty()),
         musical_key: hymn.musical_key.clone().filter(|k| !k.is_empty()),
+        song_number: hymn.song_number.clone().filter(|n| !n.is_empty()),
         verses,
         tags,
     };
+
+    if let Some(existing_id) = find_existing_song_id(&song)? {
+        return Ok(existing_id);
+    }
 
     create_song(&song)
 }
@@ -237,6 +291,7 @@ pub fn import_csv(content: &str) -> Result<Vec<i64>, String> {
             title,
             author,
             musical_key: None,
+            song_number: None,
             verses,
             tags: Vec::new(),
         };
@@ -311,6 +366,7 @@ pub fn import_text(content: &str) -> Result<i64, String> {
         title,
         author,
         musical_key: None,
+        song_number: None,
         verses,
         tags: Vec::new(),
     };

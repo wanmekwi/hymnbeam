@@ -6,9 +6,14 @@ mod collections;
 mod db;
 mod export;
 mod import;
+#[cfg(target_os = "macos")]
+mod macos_dock;
 mod models;
 mod settings;
 mod songs;
+
+#[cfg(target_os = "macos")]
+const APP_ICON: &[u8] = include_bytes!("../icons/icon.icns");
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -96,6 +101,9 @@ fn main() {
             send_to_projector
         ])
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            macos_dock::set_dock_icon(APP_ICON);
+
             let handle = app.handle();
             let settings_item = MenuItemBuilder::with_id("settings", "Settings…")
                 .accelerator("CmdOrCtrl+,")

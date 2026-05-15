@@ -12,6 +12,7 @@ const state = {
     editingSongId: null,
     sortBy: 'title',
     searchQuery: '',
+    searchResults: null,  // null = not searching, [] = empty results
     collections: [],        // all collection summaries
     openCollection: null,   // currently open collection (full with songs)
     collectionPosition: -1, // index of active song in open collection
@@ -79,8 +80,7 @@ const elements = {
     songDisplay: document.getElementById('songDisplay'),
     displayTitle: document.getElementById('displayTitle'),
     displayAuthor: document.getElementById('displayAuthor'),
-    verseTabs: document.getElementById('verseTabs'),
-    verseContent: document.getElementById('verseContent'),
+    lyricsScroll: document.getElementById('lyricsScroll'),
     previewText: document.getElementById('previewText'),
     previewWindow: document.getElementById('previewWindow'),
     importBtn: document.getElementById('importBtn'),
@@ -157,6 +157,7 @@ async function fetchSongs() {
         const response = await fetch(url);
         if (!response.ok) throw new Error('Failed to fetch songs');
         state.songs = await response.json();
+        state.searchResults = null;
         renderSongList();
         updateStatus('connected');
     } catch (error) {
@@ -166,22 +167,133 @@ async function fetchSongs() {
 }
 
 
-async function searchSongs(query) {
-    state.searchQuery = query;
-    try {
-        const params = new URLSearchParams({ sort: state.sortBy });
-        if (query.trim()) {
-            params.set('q', query.trim());
+// --- Forgiving search ----------------------------------------------------
+
+function normalizeForSearch(s) {
+    return String(s || '')
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // strip accents
+        .replace(/[^a-z0-9\s]/g, ' ')                       // strip punctuation
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// Standard Levenshtein, with an early bail-out when lengths differ a lot so
+// scoring stays cheap on a library of thousands of songs.
+function levenshtein(a, b) {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    if (Math.abs(a.length - b.length) > 3) return 99;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 0; i < a.length; i++) {
+        const curr = [i + 1];
+        for (let j = 0; j < b.length; j++) {
+            const cost = a[i] === b[j] ? 0 : 1;
+            curr.push(Math.min(curr[j] + 1, prev[j + 1] + 1, prev[j] + cost));
         }
-        const url = query.trim()
-            ? `${API_URL}/songs/search?${params}`
-            : `${API_URL}/songs?${params}`;
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Search failed');
-        state.songs = await response.json();
+        prev = curr;
+    }
+    return prev[b.length];
+}
+
+function fuzzyScore(rawQuery, song) {
+    const q = normalizeForSearch(rawQuery);
+    if (!q) return 0;
+
+    const title = normalizeForSearch(song.title);
+    const author = normalizeForSearch(song.author || '');
+    const number = String(song.song_number || song.id || '');
+    const numberNorm = normalizeForSearch(number);
+
+    // Song-number match wins outright — it's how hymnal users page-flip.
+    if (numberNorm === q) return 100000;
+    if (numberNorm.startsWith(q)) return 50000 - q.length;
+
+    let best = 0;
+
+    if (title === q) best = 20000;
+    else if (title.startsWith(q)) best = 12000 - title.length;
+    else if (title.includes(q)) {
+        best = 8000 - title.indexOf(q) * 5 - title.length;
+    }
+
+    if (author === q) best = Math.max(best, 5000);
+    else if (author.startsWith(q)) best = Math.max(best, 3000);
+    else if (author.includes(q)) best = Math.max(best, 1500);
+
+    // Per-word scoring lets "amazing grace" still rank a song titled
+    // "Grace, How Amazing" highly even though the words are reordered.
+    const qWords = q.split(' ').filter(Boolean);
+    const titleWords = title.split(' ').filter(Boolean);
+    if (qWords.length > 0) {
+        let wordScore = 0;
+        let allMatched = true;
+        for (const qw of qWords) {
+            let matched = 0;
+            for (const tw of titleWords) {
+                if (tw === qw) { matched = Math.max(matched, 400); break; }
+                if (tw.startsWith(qw)) matched = Math.max(matched, 260);
+                else if (tw.includes(qw)) matched = Math.max(matched, 130);
+                else if (qw.length >= 4) {
+                    const d = levenshtein(qw, tw);
+                    if (d === 1) matched = Math.max(matched, 200);
+                    else if (d === 2 && qw.length >= 6) matched = Math.max(matched, 110);
+                }
+            }
+            if (matched === 0) allMatched = false;
+            wordScore += matched;
+        }
+        if (allMatched && qWords.length > 1) wordScore += 300;
+        best = Math.max(best, wordScore);
+    }
+
+    // Whole-title typo tolerance for short single-word typos.
+    if (best === 0 && q.length >= 4) {
+        const d = levenshtein(q, title);
+        if (d <= 2) best = Math.max(best, 400 - d * 120);
+    }
+
+    return best;
+}
+
+function rankedSearchResults(query) {
+    const scored = [];
+    for (const song of state.songs) {
+        const score = fuzzyScore(query, song);
+        if (score > 0) scored.push({ song, score });
+    }
+    scored.sort((a, b) => b.score - a.score || a.song.title.localeCompare(b.song.title));
+    return scored.map(r => r.song);
+}
+
+// Public entry point — also the listener bound to the search input.
+async function searchSongs(query) {
+    const trimmed = (query || '').trim();
+    state.searchQuery = trimmed;
+
+    if (!trimmed) {
+        state.searchResults = null;
         renderSongList();
-    } catch (error) {
-        console.error('Error searching songs:', error);
+        return;
+    }
+
+    state.searchResults = rankedSearchResults(trimmed);
+    renderSongList();
+
+    // If client-side ranking finds nothing in titles/authors/numbers, ask
+    // the backend to scan lyrics via FTS5 / LIKE so phrases like "chains
+    // are gone" still surface the right song.
+    if (state.searchResults.length === 0) {
+        try {
+            const params = new URLSearchParams({ q: trimmed, sort: state.sortBy });
+            const res = await fetch(`${API_URL}/songs/search?${params}`);
+            if (!res.ok) return;
+            const matches = await res.json();
+            if (state.searchQuery !== trimmed) return; // user kept typing
+            state.searchResults = matches;
+            renderSongList();
+        } catch (e) { /* ignore — user just sees empty results */ }
     }
 }
 
@@ -235,9 +347,18 @@ function buildNavigationOrder() {
 
 
 function renderSongList() {
-    elements.songCount.textContent = `${state.songs.length} song${state.songs.length !== 1 ? 's' : ''}`;
+    const searching = state.searchQuery && state.searchResults !== null;
+    const list = searching ? state.searchResults : state.songs;
 
-    if (state.songs.length === 0) {
+    if (searching) {
+        elements.songCount.textContent =
+            `${list.length} match${list.length === 1 ? '' : 'es'}`;
+    } else {
+        elements.songCount.textContent =
+            `${list.length} song${list.length === 1 ? '' : 's'}`;
+    }
+
+    if (list.length === 0) {
         elements.emptyState.style.display = 'flex';
         elements.songList.innerHTML = '';
         elements.songList.appendChild(elements.emptyState);
@@ -245,11 +366,11 @@ function renderSongList() {
     }
 
     elements.emptyState.style.display = 'none';
-    elements.songList.innerHTML = state.songs.map(song => `
+    elements.songList.innerHTML = list.map(song => `
         <div class="song-item ${state.currentSong?.id === song.id ? 'active' : ''}"
              data-id="${song.id}">
             <div class="song-item-header">
-                <span class="song-item-number">#${song.id}</span>
+                <span class="song-item-number">#${escapeHtml(String(song.song_number || song.id))}</span>
                 <span class="song-item-title">${escapeHtml(song.title)}</span>
                 ${song.musical_key ? `<span class="song-item-key">${escapeHtml(song.musical_key)}</span>` : ''}
             </div>
@@ -275,39 +396,63 @@ function renderSongDisplay() {
     elements.contentPlaceholder.hidden = true;
     elements.songDisplay.hidden = false;
 
-    elements.displayTitle.textContent = state.currentSong.title;
+    const num = state.currentSong.song_number;
+    elements.displayTitle.textContent = num
+        ? `#${num}  ${state.currentSong.title}`
+        : state.currentSong.title;
     elements.displayAuthor.textContent = state.currentSong.author || '';
 
-    elements.verseTabs.innerHTML = state.currentSong.verses.map((verse, i) => `
-        <button class="verse-tab ${i === state.currentVerseIndex ? 'active' : ''}"
-                data-index="${i}">
-            ${escapeHtml(verse.label)}
-        </button>
-    `).join('');
-
-    elements.verseTabs.querySelectorAll('.verse-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-            const index = parseInt(tab.dataset.index);
-            state.currentVerseIndex = index;
-            const navPos = state.navigationOrder.indexOf(index);
-            if (navPos !== -1) {
-                state.navPosition = navPos;
-            }
-            renderSongDisplay();
-            sendToProjector();
-        });
-    });
-
+    renderLyrics();
     renderQuickNav();
 
     const currentVerse = state.currentSong.verses[state.currentVerseIndex];
     if (currentVerse) {
-        elements.verseContent.textContent = currentVerse.text;
-        applyTextSizeClass(elements.verseContent, currentVerse.text);
         updatePreview(currentVerse.text);
     }
 
     renderSongList();
+}
+
+function renderLyrics() {
+    const verses = state.currentSong?.verses || [];
+    elements.lyricsScroll.innerHTML = verses.map((verse, i) => `
+        <div class="verse-card ${i === state.currentVerseIndex ? 'active' : ''}"
+             data-index="${i}">
+            <div class="verse-card-label">${escapeHtml(verse.label)}</div>
+            <div class="verse-card-text">${escapeHtml(verse.text)}</div>
+        </div>
+    `).join('');
+
+    elements.lyricsScroll.querySelectorAll('.verse-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const idx = parseInt(card.dataset.index, 10);
+            selectVerse(idx);
+        });
+    });
+
+    scrollActiveVerseIntoView();
+}
+
+function selectVerse(index) {
+    if (!state.currentSong) return;
+    state.currentVerseIndex = index;
+    const navPos = state.navigationOrder.indexOf(index);
+    if (navPos !== -1) state.navPosition = navPos;
+    renderSongDisplay();
+    sendToProjector();
+}
+
+function scrollActiveVerseIntoView() {
+    const active = elements.lyricsScroll.querySelector('.verse-card.active');
+    if (!active) return;
+    // Use the scroll container's geometry — `scrollIntoView` would jump the
+    // whole window, which feels jarring inside a panel.
+    const ct = elements.lyricsScroll.getBoundingClientRect();
+    const at = active.getBoundingClientRect();
+    if (at.top < ct.top || at.bottom > ct.bottom) {
+        const offset = at.top - ct.top + elements.lyricsScroll.scrollTop - 16;
+        elements.lyricsScroll.scrollTo({ top: offset, behavior: 'smooth' });
+    }
 }
 
 
@@ -359,19 +504,6 @@ function renderQuickNav() {
 }
 
 
-function applyTextSizeClass(element, text) {
-    element.classList.remove('long-text', 'very-long-text');
-    const lineCount = (text.match(/\n/g) || []).length + 1;
-    const charCount = text.length;
-
-    if (lineCount > 8 || charCount > 350) {
-        element.classList.add('very-long-text');
-    } else if (lineCount > 5 || charCount > 200) {
-        element.classList.add('long-text');
-    }
-}
-
-
 function updatePreview(text) {
     if (state.isBlank) {
         elements.previewText.textContent = '';
@@ -395,6 +527,7 @@ async function sendToProjector() {
         author: state.currentSong.author,
         musical_key: state.currentSong.musical_key,
         songId: state.currentSong.id,
+        songNumber: state.currentSong.song_number || null,
         verses: state.currentSong.verses.map(v => v.text)
     };
 
@@ -496,32 +629,52 @@ function jumpToVerse(index) {
 }
 
 
+let importInFlight = false;
+
 async function importFiles(files) {
+    // Without this guard a double-click on the drop zone (or a second drop
+    // while the first is still posting) fires a second POST /import — and
+    // before the backend learned to dedupe that produced a doubled library.
+    if (importInFlight) return;
+    if (!files || files.length === 0) return;
+    importInFlight = true;
+    elements.dropZone.classList.add('busy');
+    elements.dropZone.style.pointerEvents = 'none';
+    elements.fileInput.disabled = true;
+
     const formData = new FormData();
     let importedCount = 0;
 
-    for (const file of files) {
-        formData.set('file', file);
-        try {
-            const response = await fetch(`${API_URL}/import`, {
-                method: 'POST',
-                body: formData
-            });
-            if (response.ok) {
-                const result = await response.json();
-                importedCount += result.imported;
+    try {
+        for (const file of files) {
+            formData.set('file', file);
+            try {
+                const response = await fetch(`${API_URL}/import`, {
+                    method: 'POST',
+                    body: formData
+                });
+                if (response.ok) {
+                    const result = await response.json();
+                    importedCount += result.imported;
+                }
+            } catch (error) {
+                console.error(`Error importing ${file.name}:`, error);
             }
-        } catch (error) {
-            console.error(`Error importing ${file.name}:`, error);
         }
-    }
 
-    if (importedCount > 0) {
-        updateStatus(`Imported ${importedCount} song${importedCount !== 1 ? 's' : ''}`);
-        fetchSongs();
-    }
+        if (importedCount > 0) {
+            updateStatus(`Imported ${importedCount} song${importedCount !== 1 ? 's' : ''}`);
+            fetchSongs();
+        }
 
-    closeImportModal();
+        closeImportModal();
+    } finally {
+        importInFlight = false;
+        elements.dropZone.classList.remove('busy');
+        elements.dropZone.style.pointerEvents = '';
+        elements.fileInput.disabled = false;
+        elements.fileInput.value = '';
+    }
 }
 
 
@@ -1389,10 +1542,8 @@ function initMenuEvents() {
 
 
 function initEventListeners() {
-    let searchTimeout;
     elements.searchInput.addEventListener('input', (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => searchSongs(e.target.value), 200);
+        searchSongs(e.target.value);
     });
 
     elements.sortSelect.addEventListener('change', (e) => {
