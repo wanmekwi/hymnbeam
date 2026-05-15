@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Multipart, Path, Query},
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
@@ -364,8 +364,14 @@ async fn put_app_settings(
 }
 
 pub fn create_router() -> Router {
+    // The API is bound to 127.0.0.1 and only ever called from the Tauri
+    // webview, so we restrict CORS to the webview's own origins (macOS uses
+    // tauri://localhost, Windows uses https://tauri.localhost).
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin([
+            HeaderValue::from_static("tauri://localhost"),
+            HeaderValue::from_static("https://tauri.localhost"),
+        ])
         .allow_methods(Any)
         .allow_headers(Any);
 

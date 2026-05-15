@@ -11,69 +11,39 @@ A cross-platform desktop app for projecting song lyrics to a screen for church c
 - **Full-text search**: Search by title, author, or lyrics
 - **Portable library**: Single SQLite database file
 
-## Requirements
+## Development
 
-- **Rust** (for Tauri): Install via [rustup.rs](https://rustup.rs)
-- **Python 3.10+**: For the backend API
-- **Node.js 18+**: For development tools (optional)
-
-## Quick Start
-
-### 1. Install Rust
+Requirements: a Rust toolchain (install via [rustup.rs](https://rustup.rs)) and
+the Tauri CLI (`cargo install tauri-cli`).
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-```
-
-### 2. Set up Python backend
-
-```bash
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 3. Start the backend
-
-```bash
-cd backend
-python3 main.py
-```
-
-Backend runs at `http://127.0.0.1:8765`
-
-### 4. Run the Tauri app (development)
-
-```bash
-cd src-tauri
 cargo tauri dev
 ```
 
-## Testing Without Tauri
+The embedded `axum` server is started before the operator window opens, on a
+port chosen by the OS, and the frontend reads it via the `get_api_port` Tauri
+command. There is no separate backend process.
 
-You can test the frontend without compiling Tauri:
-
-```bash
-# Start the backend
-cd backend && python3 main.py &
-
-# Serve the frontend (use any static server)
-cd frontend && python3 -m http.server 5173
-```
-
-Open `http://localhost:5173` in your browser.
+Song library and uploaded backgrounds live in
+`~/Library/Application Support/HymnBeam/`.
 
 ## Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
-| `→` / `←` | Next / Previous verse |
-| `Space` | Blank / Unblank screen |
-| `1`-`9` | Jump to verse number |
+| `→` / `←` | Next / previous verse |
+| `Space` | Blank / unblank screen |
+| `1`–`9` | Jump to verse 1–9 |
+| `0` | Jump to verse 10 |
 | `Escape` | Clear display |
-| `F` | Toggle projector window |
+| `F` | Open projector |
+| `⌘,` | Display settings |
+| `⌘N` | New song |
+| `⌘E` | Edit selected song |
+| `⌘⌫` | Delete selected song |
+| `⌘I` | Import songs |
+| `⌘⇧P` | Open / close projector |
+| `⌘B` | Blank screen |
 
 ## Song File Formats
 
@@ -113,21 +83,27 @@ More lyrics...
 
 ```
 hymnbeam/
-├── src-tauri/          # Tauri/Rust shell
-│   ├── src/main.rs     # Window management, IPC
-│   └── tauri.conf.json # App configuration
-├── frontend/           # Web UI
-│   ├── index.html      # Operator window
-│   ├── projector.html  # Projector display
-│   ├── css/            # Stylesheets
-│   └── js/             # Application logic
-├── backend/            # Python API
-│   ├── main.py         # FastAPI server
-│   ├── songs.py        # Song CRUD operations
-│   ├── importer.py     # File parsers
-│   └── database.py     # SQLite setup
-├── songs/              # Sample song files
-└── data/               # SQLite database (created on first run)
+├── src-tauri/            # Tauri (Rust) shell + embedded HTTP server
+│   ├── src/main.rs       # Window management, IPC, native menus
+│   ├── src/api.rs        # axum routes (songs, collections, settings, …)
+│   ├── src/db.rs         # SQLite setup, FTS5 tables, migrations
+│   ├── src/songs.rs      # Song CRUD
+│   ├── src/collections.rs# Collections CRUD
+│   ├── src/import.rs     # JSON / CSV / text parsers
+│   ├── src/export.rs     # JSON / CSV / text exporters
+│   ├── src/settings.rs   # Display settings (single-row JSON blob)
+│   ├── src/backgrounds.rs# Background image upload + serving
+│   └── tauri.conf.json   # Bundle config
+├── frontend/             # Web UI loaded by the Tauri webview
+│   ├── index.html        # Operator window
+│   ├── projector.html    # Projector display
+│   ├── css/              # Stylesheets
+│   ├── js/               # Application logic
+│   ├── fonts/            # Bundled WOFF2 fonts (SIL OFL)
+│   └── img/              # In-app logo art
+├── src-tauri/icons/      # App icon variants (.icns / .ico / png)
+├── songs/                # Sample song files
+└── build-macos.sh        # Universal-binary build + ad-hoc sign
 ```
 
 ## Building for Distribution (macOS)
