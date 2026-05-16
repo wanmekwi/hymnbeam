@@ -17,6 +17,9 @@ data/
 # Personal song libraries (not for distribution)
 251123_Hymns.json
 
+# Working notes (not committed; see git log for history)
+progress.md
+
 # IDE
 .idea/
 .vscode/
