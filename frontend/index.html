@@ -186,11 +186,23 @@
                 </div>
 
                 <div class="song-display" id="songDisplay" hidden>
-                    <div class="song-header">
+                    <div class="song-top-row">
                         <div class="song-meta">
                             <h1 class="song-title" id="displayTitle"></h1>
                             <p class="song-author" id="displayAuthor"></p>
                         </div>
+                        <div class="preview-container">
+                            <div class="preview-label">Preview</div>
+                            <div class="preview-window" id="previewWindow">
+                                <iframe class="preview-frame" id="previewFrame"
+                                        src="projector.html" title="Projector preview"
+                                        aria-label="Projector preview"></iframe>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="song-control-bar">
+                        <div class="quick-nav" id="quickNav"></div>
                         <div class="song-actions">
                             <button type="button" class="btn btn-icon" id="addToCollectionBtn" title="Add to collection">
                                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -209,6 +221,7 @@
                                     <path d="M4 6h12M8 6V4h4v2M6 6v10a2 2 0 002 2h4a2 2 0 002-2V6"/>
                                 </svg>
                             </button>
+                            <div class="action-divider"></div>
                             <button type="button" class="btn btn-icon" id="blankBtn" title="Blank screen (Space)">
                                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
                                     <rect x="3" y="3" width="14" height="14" rx="2"/>
@@ -226,24 +239,7 @@
                         </div>
                     </div>
 
-                    <div class="song-body">
-                        <div class="song-body-left">
-                            <div class="verse-navigator">
-                                <div class="quick-nav" id="quickNav"></div>
-                            </div>
-
-                            <div class="lyrics-scroll" id="lyricsScroll"></div>
-                        </div>
-
-                        <div class="song-body-right">
-                            <div class="preview-container">
-                                <div class="preview-label">Projector Preview</div>
-                                <div class="preview-window" id="previewWindow">
-                                    <div class="preview-text" id="previewText"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <div class="lyrics-grid" id="lyricsScroll"></div>
                 </div>
             </section>
         </main>
@@ -289,6 +285,11 @@
             <div class="modal-body">
                 <form id="songForm" class="song-form">
                     <div class="form-row form-row-3">
+                        <div class="form-group">
+                            <label for="songNumberInput">Number</label>
+                            <input type="text" id="songNumberInput" inputmode="numeric" placeholder="e.g., 483">
+                            <span class="form-hint" id="songNumberHint"></span>
+                        </div>
                         <div class="form-group">
                             <label for="songKeyInput">Key</label>
                             <input type="text" id="songKeyInput" placeholder="e.g., C, G, Am">

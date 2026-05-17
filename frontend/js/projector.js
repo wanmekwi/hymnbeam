@@ -5,6 +5,10 @@ const elements = {
     blankScreen: document.getElementById('blankScreen'),
     songTitleBar: document.getElementById('songTitleBar'),
     songMetaBar: document.getElementById('songMetaBar'),
+    verseNavUp: document.getElementById('verseNavUp'),
+    verseNavDown: document.getElementById('verseNavDown'),
+    metaColKey: document.getElementById('metaColKey'),
+    metaColAuthor: document.getElementById('metaColAuthor'),
     projector: document.querySelector('.projector')
 };
 
@@ -42,9 +46,12 @@ function applySettings(settings) {
         elements.lyricsText.style.fontWeight = t.fontWeight;
     }
     if (t.alignment) {
+        // Block stays centered on screen; text-align only controls how the
+        // individual lines sit inside the (max-content) lyrics block — so
+        // "left" gives flush-left lines under a centered verse, rather than
+        // pulling the whole block to the screen edge.
         elements.lyricsText.style.textAlign = t.alignment;
-        elements.lyricsContainer.style.justifyContent =
-            t.alignment === 'left' ? 'flex-start' : 'center';
+        elements.lyricsContainer.style.justifyContent = 'center';
     }
 
     let bgValue;
@@ -117,16 +124,21 @@ document.body.appendChild(measureEl);
 
 
 function updateDisplay(data) {
-    const { text, label, isBlank, title, author, musical_key, songId, songNumber, verses } = data;
+    const { text, label, isBlank, title, author, musical_key, songId, songNumber, verses,
+            hasPrev, hasNext } = data;
 
     if (isBlank) {
         elements.blankScreen.classList.add('active');
         elements.songTitleBar.classList.remove('visible');
         elements.songMetaBar.classList.remove('visible');
+        elements.verseNavUp.classList.remove('visible');
+        elements.verseNavDown.classList.remove('visible');
         return;
     }
 
     elements.blankScreen.classList.remove('active');
+    elements.verseNavUp.classList.toggle('visible', !!hasPrev);
+    elements.verseNavDown.classList.toggle('visible', !!hasNext);
 
     if (songId !== currentSongId) {
         currentSongId = songId;
@@ -160,52 +172,60 @@ function updateDisplay(data) {
 
 
 function updateSongMeta(title, author, musical_key, songNumber) {
-    elements.songTitleBar.textContent = title || '';
-    elements.songTitleBar.classList.toggle('visible', !!title);
-
     const number = songNumber != null && songNumber !== '' ? String(songNumber) : '';
-    const hasAnyMeta = number || musical_key || author;
+    const displayTitle = title
+        ? (number ? `${title} - ${number}` : title)
+        : '';
+    elements.songTitleBar.textContent = displayTitle;
+    elements.songTitleBar.classList.toggle('visible', !!displayTitle);
 
     const escape = (s) => String(s).replace(/[&<>"']/g, c => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
 
-    let metaHtml = `
-        <div class="meta-col">
-            ${number ? `<span class="meta-label">#</span><span class="meta-value">${escape(number)}</span>` : ''}
-        </div>
-        <div class="meta-col">
-            ${musical_key ? `<span class="meta-label">Key:</span><span class="meta-value">${escape(musical_key)}</span>` : ''}
-        </div>
-        <div class="meta-col">
-            ${author ? `<span class="meta-value">${escape(author)}</span>` : ''}
-        </div>
-    `;
+    // Only touch the key/author columns — the left column hosts the verse-nav
+    // chevrons and verse label, which are managed elsewhere and must persist
+    // across meta updates.
+    elements.metaColKey.innerHTML = musical_key
+        ? `<span class="meta-label">Key:</span><span class="meta-value">${escape(musical_key)}</span>`
+        : '';
+    elements.metaColAuthor.innerHTML = author
+        ? `<span class="meta-value">${escape(author)}</span>`
+        : '';
 
-    elements.songMetaBar.innerHTML = metaHtml;
-    elements.songMetaBar.classList.toggle('visible', !!hasAnyMeta);
+    // The bar always shows for a loaded song now — the left col holds the
+    // chevrons / verse label, so it has content even when key+author are blank.
+    elements.songMetaBar.classList.toggle('visible', !!title);
 }
 
 
-const FILL_RATIO = 0.9;
+const WIDTH_FILL = 0.9;
+const BAR_GAP_PX = 24;
 const MIN_FONT_PX = 16;
 
-// Measure the largest font-size at which `text` fits within the 90% box, using
-// the off-screen node so the visible verse isn't disturbed. `white-space: pre`
-// means lines never wrap (they break only where the lyrics already do), so
-// width and height scale almost linearly with font-size. Font metrics aren't
-// perfectly linear though — sub-pixel rounding, hinting — so we measure-and-
-// correct over a few passes and round down so it never tips over 90%.
+// Find the vertical band the lyrics may occupy: the gap between the title bar
+// and the meta bar, minus a small clearance so the verse never visually
+// touches either. Bars with `display: none` (via .layout-hide-*) report a
+// zero-height rect, so they correctly fall back to the screen edge.
+function availableLyricBand() {
+    const containerRect = elements.lyricsContainer.getBoundingClientRect();
+    const titleRect = elements.songTitleBar.getBoundingClientRect();
+    const metaRect = elements.songMetaBar.getBoundingClientRect();
+
+    const top = titleRect.height > 0 ? titleRect.bottom + BAR_GAP_PX : containerRect.top;
+    const bottom = metaRect.height > 0 ? metaRect.top - BAR_GAP_PX : containerRect.bottom;
+    return Math.max(MIN_FONT_PX * 2, bottom - top);
+}
+
+// Measure the largest font-size at which `text` fits the available band.
+// `white-space: pre` means lines never wrap, so width and height scale
+// near-linearly with font-size — three measure/correct passes get within a
+// sub-pixel of the limit, and the round-down guarantees we never tip over.
 function measureFitSize(text) {
     measureEl.textContent = text;
-    // Container size already accounts for safe-area padding on .projector and
-    // for the title/meta bars (they're absolute-positioned so don't reduce it,
-    // but the bars sit inside the safe area, so leaving a small margin here is
-    // still useful when bars are visible — the FILL_RATIO covers that).
     const cw = elements.lyricsContainer.clientWidth || window.innerWidth;
-    const ch = elements.lyricsContainer.clientHeight || window.innerHeight;
-    const targetW = cw * FILL_RATIO;
-    const targetH = ch * FILL_RATIO;
+    const targetW = cw * WIDTH_FILL;
+    const targetH = availableLyricBand();
 
     let fontSize = 100;
     for (let pass = 0; pass < 3; pass++) {
@@ -237,31 +257,28 @@ function applySongFontSize() {
 }
 
 
+// Tauri events drive the real projector window. postMessage drives the
+// in-operator preview iframe — same projector page, fed by the operator
+// directly. Both are registered unconditionally so a single source file
+// renders both the live projection and the WYSIWYG preview.
 if (window.__TAURI__) {
     window.__TAURI__.event.listen('update-lyrics', (event) => {
-        try {
-            const data = JSON.parse(event.payload);
-            updateDisplay(data);
-        } catch (error) {
-            console.error('Error parsing lyrics update:', error);
-        }
+        try { updateDisplay(JSON.parse(event.payload)); }
+        catch (error) { console.error('Error parsing lyrics update:', error); }
     });
     window.__TAURI__.event.listen('apply-settings', (event) => {
-        try {
-            applySettings(JSON.parse(event.payload));
-        } catch (error) {
-            console.error('Error parsing settings update:', error);
-        }
-    });
-} else {
-    window.addEventListener('message', (event) => {
-        if (event.data.type === 'update-lyrics') {
-            updateDisplay(event.data);
-        } else if (event.data.type === 'apply-settings') {
-            applySettings(event.data.settings);
-        }
+        try { applySettings(JSON.parse(event.payload)); }
+        catch (error) { console.error('Error parsing settings update:', error); }
     });
 }
+window.addEventListener('message', (event) => {
+    if (!event.data || typeof event.data !== 'object') return;
+    if (event.data.type === 'update-lyrics') {
+        updateDisplay(event.data);
+    } else if (event.data.type === 'apply-settings') {
+        applySettings(event.data.settings);
+    }
+});
 
 
 document.addEventListener('keydown', (e) => {
@@ -278,6 +295,11 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('DOMContentLoaded', () => {
     elements.lyricsText.textContent = '';
     loadInitialSettings();
+    // Iframe preview: tell the parent we're alive so it can pump current state.
+    if (window.parent && window.parent !== window) {
+        try { window.parent.postMessage({ type: 'projector-ready' }, '*'); }
+        catch (e) { /* parent origin mismatch — harmless */ }
+    }
 });
 
 

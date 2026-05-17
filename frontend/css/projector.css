@@ -162,12 +162,23 @@ body {
     font-weight: 500;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.65);
     text-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+    line-height: 1;
 }
 
 .verse-label.visible {
     display: block;
+}
+
+/* Verse-label + chevron cluster lives inside the meta bar's first column. */
+.meta-col-nav {
+    gap: clamp(10px, 1vw, 18px);
+}
+.verse-nav-chevrons {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 
 .projector.transition-cut .lyrics-container {
@@ -190,7 +201,7 @@ body {
     font-weight: 600;
     line-height: 1.35;
     color: var(--text-color);
-    text-shadow: 
+    text-shadow:
         0 3px 12px rgba(0, 0, 0, 0.6),
         0 0 80px rgba(255, 255, 255, 0.03);
     white-space: pre;
@@ -199,13 +210,47 @@ body {
     flex-shrink: 0;
 }
 
+
+/* Up/down chevrons hinting that the song has more verses above/below the
+ * current slide. Lives inside the bottom-left .verse-nav-cluster. Hidden
+ * when there's nothing in that direction. */
+.verse-nav-hint {
+    width: clamp(24px, 2.6vw, 36px);
+    height: clamp(24px, 2.6vw, 36px);
+    color: rgba(255, 255, 255, 0.55);
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+    opacity: 0;
+    transition: opacity 350ms ease;
+}
+
+.verse-nav-hint svg {
+    width: 100%;
+    height: 100%;
+}
+
+.verse-nav-hint.visible {
+    opacity: 0.85;
+}
+
+.verse-nav-hint-up.visible   { animation: verseNavBobUp   2.4s ease-in-out infinite; }
+.verse-nav-hint-down.visible { animation: verseNavBobDown 2.4s ease-in-out infinite; }
+
+@keyframes verseNavBobUp {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
+}
+@keyframes verseNavBobDown {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(3px); }
+}
+
 .blank-screen {
     position: fixed;
     inset: 0;
     background: #000;
     opacity: 0;
     visibility: hidden;
-    transition: 
+    transition:
         opacity 400ms ease,
         visibility 400ms ease;
     z-index: 100;

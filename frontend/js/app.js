@@ -81,7 +81,7 @@ const elements = {
     displayTitle: document.getElementById('displayTitle'),
     displayAuthor: document.getElementById('displayAuthor'),
     lyricsScroll: document.getElementById('lyricsScroll'),
-    previewText: document.getElementById('previewText'),
+    previewFrame: document.getElementById('previewFrame'),
     previewWindow: document.getElementById('previewWindow'),
     importBtn: document.getElementById('importBtn'),
     projectorBtn: document.getElementById('projectorBtn'),
@@ -99,6 +99,8 @@ const elements = {
     editModalTitle: document.getElementById('editModalTitle'),
     closeEditModal: document.getElementById('closeEditModal'),
     songForm: document.getElementById('songForm'),
+    songNumberInput: document.getElementById('songNumberInput'),
+    songNumberHint: document.getElementById('songNumberHint'),
     songKeyInput: document.getElementById('songKeyInput'),
     songAuthorInput: document.getElementById('songAuthorInput'),
     songPasteInput: document.getElementById('songPasteInput'),
@@ -504,22 +506,14 @@ function renderQuickNav() {
 }
 
 
-function updatePreview(text) {
-    if (state.isBlank) {
-        elements.previewText.textContent = '';
-        elements.previewWindow.parentElement.classList.add('blanked');
-    } else {
-        elements.previewText.textContent = text;
-        elements.previewWindow.parentElement.classList.remove('blanked');
-    }
-}
-
-
-async function sendToProjector() {
-    if (!state.projectorOpen || !state.currentSong) return;
-
+// Build the projector payload from current operator state. Both the real
+// projector window and the in-operator preview iframe consume this — same
+// shape, so any future projector-side field shows up in the preview for free.
+function buildProjectorPayload() {
+    if (!state.currentSong) return null;
     const currentVerse = state.currentSong.verses[state.currentVerseIndex];
-    const payload = {
+    const navLen = state.navigationOrder.length;
+    return {
         text: state.isBlank ? '' : (currentVerse?.text || ''),
         label: currentVerse?.label || '',
         isBlank: state.isBlank,
@@ -528,8 +522,38 @@ async function sendToProjector() {
         musical_key: state.currentSong.musical_key,
         songId: state.currentSong.id,
         songNumber: state.currentSong.song_number || null,
-        verses: state.currentSong.verses.map(v => v.text)
+        verses: state.currentSong.verses.map(v => v.text),
+        // Nav-position rather than verse-index so the audience-facing arrow
+        // reflects "operator can advance to another slide" (which includes
+        // chorus repeats), not just "there's a later verse in the song body".
+        hasPrev: navLen > 0 && state.navPosition > 0,
+        hasNext: navLen > 0 && state.navPosition < navLen - 1
     };
+}
+
+// Sync the preview iframe. Always safe to call — no-op if the iframe isn't
+// loaded yet or there's no current song. `updatePreview()` accepts an
+// optional text arg for callers that still pass one; the arg is ignored
+// because the iframe pulls everything from buildProjectorPayload().
+function updatePreview(_text) {
+    const frame = elements.previewFrame;
+    if (!frame || !frame.contentWindow) return;
+    const payload = buildProjectorPayload();
+    if (!payload) {
+        frame.contentWindow.postMessage(
+            { type: 'update-lyrics', text: '', label: '', isBlank: true,
+              verses: [], hasPrev: false, hasNext: false }, '*');
+        return;
+    }
+    frame.contentWindow.postMessage({ type: 'update-lyrics', ...payload }, '*');
+}
+
+async function sendToProjector() {
+    updatePreview();
+    if (!state.projectorOpen || !state.currentSong) return;
+
+    const payload = buildProjectorPayload();
+    if (!payload) return;
 
     try {
         if (window.__TAURI__) {
@@ -543,10 +567,7 @@ async function sendToProjector() {
     }
 
     if (!window.__TAURI__ && window.projectorWindow) {
-        window.projectorWindow.postMessage({
-            type: 'update-lyrics',
-            ...payload
-        }, '*');
+        window.projectorWindow.postMessage({ type: 'update-lyrics', ...payload }, '*');
     }
 }
 
@@ -713,6 +734,9 @@ function openEditModal(song = null) {
     state.editingSongId = song?.id || null;
     elements.editModalTitle.textContent = song ? 'Edit Song' : 'Add Song';
 
+    elements.songNumberInput.value = song?.song_number || '';
+    elements.songNumberHint.textContent = '';
+    elements.songNumberHint.classList.remove('form-hint-error');
     elements.songKeyInput.value = song?.musical_key || '';
     elements.songAuthorInput.value = song?.author || '';
 
@@ -736,6 +760,29 @@ function openEditModal(song = null) {
 function closeEditModal() {
     elements.editModal.classList.remove('active');
     state.editingSongId = null;
+}
+
+
+// Returns the other song that already owns `number`, or null. `editingId` is
+// excluded so re-saving an unchanged number on its own song is never flagged.
+function findSongNumberConflict(number, editingId) {
+    const target = String(number).trim();
+    if (!target) return null;
+    return state.songs.find(s =>
+        s.song_number != null &&
+        String(s.song_number).trim() === target &&
+        s.id !== editingId
+    ) || null;
+}
+
+function showSongNumberError(msg) {
+    elements.songNumberHint.textContent = msg;
+    elements.songNumberHint.classList.add('form-hint-error');
+}
+
+function clearSongNumberError() {
+    elements.songNumberHint.textContent = '';
+    elements.songNumberHint.classList.remove('form-hint-error');
 }
 
 
@@ -799,10 +846,21 @@ async function saveSong() {
         return;
     }
 
+    const numberRaw = elements.songNumberInput.value.trim();
+    if (numberRaw) {
+        const conflict = findSongNumberConflict(numberRaw, state.editingSongId);
+        if (conflict) {
+            showSongNumberError(`#${numberRaw} is already used by "${conflict.title}"`);
+            elements.songNumberInput.focus();
+            return;
+        }
+    }
+
     const song = {
         title: parsed.title,
         author: elements.songAuthorInput.value.trim() || null,
         musical_key: elements.songKeyInput.value.trim() || null,
+        song_number: numberRaw || null,
         verses: parsed.verses,
         tags: []
     };
@@ -821,6 +879,13 @@ async function saveSong() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(song)
             });
+        }
+
+        if (response.status === 409) {
+            // Backend safety net for race conditions or direct-API edits.
+            showSongNumberError(`#${numberRaw} is already used by another song.`);
+            elements.songNumberInput.focus();
+            return;
         }
 
         if (!response.ok) throw new Error('Failed to save song');
@@ -1261,6 +1326,10 @@ async function loadSettings() {
         console.warn('Settings load failed, using defaults', e);
         state.settings = mergeSettings(null);
     }
+    // Iframe may have booted and asked for state already — push now that we
+    // have settings to send. Safe to call repeatedly.
+    pushSettingsToPreview();
+    updatePreview();
 }
 
 let saveSettingsTimer = null;
@@ -1279,7 +1348,15 @@ function scheduleSaveSettings() {
     }, 250);
 }
 
+function pushSettingsToPreview() {
+    const frame = elements.previewFrame;
+    if (!frame || !frame.contentWindow || !state.settings) return;
+    frame.contentWindow.postMessage(
+        { type: 'apply-settings', settings: state.settings }, '*');
+}
+
 function pushSettingsToProjector() {
+    pushSettingsToPreview();
     if (!window.__TAURI__ || !state.projectorOpen) return;
     window.__TAURI__.core.invoke('send_to_projector', {
         event: 'apply-settings',
@@ -1602,6 +1679,16 @@ function initEventListeners() {
         e.preventDefault();
         saveSong();
     });
+    elements.songNumberInput.addEventListener('input', () => {
+        const value = elements.songNumberInput.value.trim();
+        if (!value) return clearSongNumberError();
+        const conflict = findSongNumberConflict(value, state.editingSongId);
+        if (conflict) {
+            showSongNumberError(`Already used by "${conflict.title}"`);
+        } else {
+            clearSongNumberError();
+        }
+    });
 
     elements.cancelDeleteBtn.addEventListener('click', closeDeleteConfirm);
     elements.confirmDeleteBtn.addEventListener('click', deleteSong);
@@ -1707,11 +1794,43 @@ function initEventListeners() {
 }
 
 
+// The preview iframe posts {type:'projector-ready'} after DOMContentLoaded
+// — at that moment its message-listener is attached and it's ready for a
+// state pump. Settings first, then current verse, so applySettings has
+// landed before updateDisplay tries to compute a fit.
+window.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'projector-ready') {
+        pushSettingsToPreview();
+        updatePreview();
+    }
+});
+
+// Keep the preview iframe's CSS scale in sync with the slot it lives in.
+// The iframe always renders at 1920×1080 internally so projector.js computes
+// fonts against the same viewport as the real projector — we just shrink the
+// whole rendered output via transform: scale to fit the preview window.
+const PREVIEW_VIRTUAL_W = 1920;
+function syncPreviewScale() {
+    const win = elements.previewWindow;
+    const frame = elements.previewFrame;
+    if (!win || !frame) return;
+    const w = win.clientWidth;
+    if (!w) return;
+    frame.style.setProperty('--preview-scale', w / PREVIEW_VIRTUAL_W);
+}
+window.addEventListener('resize', syncPreviewScale);
+
 document.addEventListener('DOMContentLoaded', async () => {
     await initApiUrl();
     initEventListeners();
     initSettingsDialog();
     initMenuEvents();
+
+    // Set the preview scale once we have layout, and again on any size change.
+    syncPreviewScale();
+    if (elements.previewWindow && typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver(syncPreviewScale).observe(elements.previewWindow);
+    }
 
     const ready = await waitForBackend();
     if (!ready) {

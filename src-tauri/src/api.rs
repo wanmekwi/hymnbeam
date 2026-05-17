@@ -19,7 +19,10 @@ use crate::export::{export_csv, export_json, export_txt};
 use crate::import::import_file;
 use crate::models::Song;
 use crate::settings::{get_settings, update_settings};
-use crate::songs::{create_song, delete_song, get_all_songs, get_song, search_songs, update_song};
+use crate::songs::{
+    create_song, delete_song, find_song_id_by_number, get_all_songs, get_song, search_songs,
+    update_song,
+};
 
 #[derive(Serialize)]
 struct StatusResponse {
@@ -133,6 +136,15 @@ async fn get_song_by_id(Path(song_id): Path<i64>) -> Result<impl IntoResponse, S
 }
 
 async fn create_new_song(Json(song): Json<Song>) -> Result<impl IntoResponse, StatusCode> {
+    // UI-driven creates must not clobber an existing song's number. Imports
+    // bypass this handler (they call create_song directly via import_file), so
+    // those stay permissive — duplicates are still possible from imports, the
+    // dedupe-on-fingerprint there handles the same-file re-import case.
+    if let Some(ref n) = song.song_number {
+        if find_song_id_by_number(n).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.is_some() {
+            return Err(StatusCode::CONFLICT);
+        }
+    }
     create_song(&song)
         .map(|id| {
             Json(IdResponse {
@@ -147,6 +159,14 @@ async fn update_existing_song(
     Path(song_id): Path<i64>,
     Json(song): Json<Song>,
 ) -> Result<impl IntoResponse, StatusCode> {
+    if let Some(ref n) = song.song_number {
+        let owner = find_song_id_by_number(n).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Some(other_id) = owner {
+            if other_id != song_id {
+                return Err(StatusCode::CONFLICT);
+            }
+        }
+    }
     match update_song(song_id, &song) {
         Ok(true) => Ok(Json(MessageResponse {
             message: "Song updated",

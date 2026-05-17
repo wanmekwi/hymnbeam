@@ -16,6 +16,27 @@ fn get_sort_clause(sort_by: &str) -> &'static str {
     }
 }
 
+// Returns the id of any song that already owns `number`, or None. The check
+// is trim-aware because the UI typically stores trimmed values but legacy
+// imports may have whitespace. Empty/whitespace-only numbers never conflict.
+pub fn find_song_id_by_number(number: &str) -> Result<Option<i64>, String> {
+    let trimmed = number.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let conn = get_connection().map_err(|e| e.to_string())?;
+    let id: rusqlite::Result<i64> = conn.query_row(
+        "SELECT id FROM songs WHERE TRIM(song_number) = ?1 LIMIT 1",
+        params![trimmed],
+        |row| row.get(0),
+    );
+    match id {
+        Ok(id) => Ok(Some(id)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 pub fn create_song(song: &Song) -> Result<i64, String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
 

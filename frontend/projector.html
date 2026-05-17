@@ -12,11 +12,30 @@
         <div class="song-title-bar" id="songTitleBar"></div>
         <div class="lyrics-container">
             <div class="lyrics-stack">
-                <div class="verse-label" id="verseLabel"></div>
                 <div class="lyrics-text" id="lyricsText"></div>
             </div>
         </div>
-        <div class="song-meta-bar" id="songMetaBar"></div>
+        <div class="song-meta-bar" id="songMetaBar">
+            <div class="meta-col meta-col-nav">
+                <div class="verse-nav-chevrons" aria-hidden="true">
+                    <div class="verse-nav-hint verse-nav-hint-up" id="verseNavUp">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                             stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="6 14 12 8 18 14"/>
+                        </svg>
+                    </div>
+                    <div class="verse-nav-hint verse-nav-hint-down" id="verseNavDown">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                             stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="6 10 12 16 18 10"/>
+                        </svg>
+                    </div>
+                </div>
+                <div class="verse-label" id="verseLabel"></div>
+            </div>
+            <div class="meta-col meta-col-key" id="metaColKey"></div>
+            <div class="meta-col meta-col-author" id="metaColAuthor"></div>
+        </div>
         <div class="blank-screen" id="blankScreen"></div>
     </div>
     <script src="js/projector.js"></script>
