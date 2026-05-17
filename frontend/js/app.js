@@ -10,7 +10,7 @@ const state = {
     projectorOpen: false,
     editingVerse: [],
     editingSongId: null,
-    sortBy: 'title',
+    sortBy: 'number',
     searchQuery: '',
     searchResults: null,  // null = not searching, [] = empty results
     collections: [],        // all collection summaries
@@ -335,12 +335,13 @@ function buildNavigationOrder() {
 
         state.navigationOrder.push(i);
 
-        if (!isChorus && chorusIndex !== -1) {
-            const nextIndex = i + 1;
-            const nextVerse = verses[nextIndex];
+        // After every non-chorus verse, insert the chorus — unless the next
+        // verse is already the chorus (no need to double it up). This now
+        // runs at the end of the song too, so the chorus closes the set.
+        if (!isChorus) {
+            const nextVerse = verses[i + 1];
             const nextIsChorus = nextVerse?.label.toLowerCase().includes('chorus');
-
-            if (!nextIsChorus && nextIndex < verses.length) {
+            if (!nextIsChorus) {
                 state.navigationOrder.push(chorusIndex);
             }
         }

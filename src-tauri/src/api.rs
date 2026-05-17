@@ -37,7 +37,7 @@ struct SortQuery {
 }
 
 fn default_sort() -> String {
-    "title".to_string()
+    "number".to_string()
 }
 
 #[derive(Deserialize)]
