@@ -1,14 +1,12 @@
 use axum::{
     body::Body,
     extract::{Multipart, Path, Query},
-    http::{header, HeaderValue, StatusCode},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpListener;
-use tower_http::cors::{Any, CorsLayer};
 
 use crate::collections::{
     add_song_to_collection, create_collection, delete_collection, get_all_collections,
@@ -384,17 +382,9 @@ async fn put_app_settings(
 }
 
 pub fn create_router() -> Router {
-    // The API is bound to 127.0.0.1 and only ever called from the Tauri
-    // webview, so we restrict CORS to the webview's own origins (macOS uses
-    // tauri://localhost, Windows uses https://tauri.localhost).
-    let cors = CorsLayer::new()
-        .allow_origin([
-            HeaderValue::from_static("tauri://localhost"),
-            HeaderValue::from_static("https://tauri.localhost"),
-        ])
-        .allow_methods(Any)
-        .allow_headers(Any);
-
+    // The router is mounted onto a Tauri custom URI scheme handler (see
+    // tauri-plugin-axum in main.rs), so requests come straight from the
+    // webview via IPC — no TCP, no CORS, no race conditions.
     Router::new()
         .route("/", get(root))
         .route("/songs", get(list_songs).post(create_new_song))
@@ -423,24 +413,4 @@ pub fn create_router() -> Router {
         .route("/settings", get(get_app_settings).put(put_app_settings))
         .route("/backgrounds", post(upload_background))
         .route("/backgrounds/{name}", get(serve_background))
-        .layer(cors)
-}
-
-pub async fn start_server() -> Result<u16, String> {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let port = listener
-        .local_addr()
-        .map_err(|e| e.to_string())?
-        .port();
-
-    let router = create_router();
-
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.ok();
-    });
-
-    Ok(port)
 }

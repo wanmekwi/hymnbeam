@@ -1440,9 +1440,9 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-axum",
  "tauri-plugin-shell",
  "tokio",
- "tower-http",
 ]
 
 [[package]]
@@ -3761,6 +3761,26 @@ dependencies = [
  "tauri-utils",
  "toml 0.9.12+spec-1.1.0",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-axum"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8c942ee41b42ad86a64cb483fdbba04601d6d3c92e9e899068d0b8bd3791532"
+dependencies = [
+ "axum",
+ "bytes",
+ "futures-util",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tower-http",
 ]
 
 [[package]]
