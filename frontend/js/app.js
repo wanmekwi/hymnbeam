@@ -1,4 +1,17 @@
-let API_URL = 'http://127.0.0.1:8765';
+// The backend is accessible via the tauri-plugin-axum custom protocol.
+// On macOS/iOS/Linux: axum://localhost
+// On Windows/Android: http://axum.localhost
+const API_URL = (() => {
+    if (!window.__TAURI_INTERNALS__ && !window.__TAURI__) {
+        console.log('[HymnBeam] Not in Tauri, using fallback API URL');
+        return 'http://127.0.0.1:8765';
+    }
+    const isWin = navigator.platform?.toLowerCase().includes('win') ||
+                  navigator.userAgent?.toLowerCase().includes('windows');
+    const url = isWin ? 'http://axum.localhost' : 'axum://localhost';
+    console.log('[HymnBeam] API_URL =', url);
+    return url;
+})();
 
 const state = {
     songs: [],
@@ -44,21 +57,9 @@ const FONT_STACKS = {
     'system-serif':     "Georgia, 'Times New Roman', serif"
 };
 
-async function initApiUrl() {
-    if (window.__TAURI__) {
-        try {
-            const port = await window.__TAURI__.core.invoke('get_api_port');
-            API_URL = `http://127.0.0.1:${port}`;
-        } catch (e) {
-            console.warn('Could not get API port from Tauri, using default');
-        }
-    }
-}
-
-// The backend server is started before the window opens, so it's normally
-// ready immediately — but poll briefly so a slow first start can't leave the
-// UI stuck on an error.
-async function waitForBackend(retries = 15, delayMs = 150) {
+// The backend server is started before the window opens, so it is normally
+// ready immediately. Poll briefly to handle any slow first start.
+async function waitForBackend(retries = 20, delayMs = 150) {
     for (let i = 0; i < retries; i++) {
         try {
             const response = await fetch(`${API_URL}/`);
@@ -150,6 +151,8 @@ const elements = {
     setTransDurationValue: document.getElementById('setTransDurationValue'),
     settingsPreview: document.getElementById('settingsPreview'),
     settingsPreviewText: document.querySelector('.settings-preview-text'),
+    collectionEmptyState: document.getElementById('collectionEmptyState'),
+    collectionSongsEmptyState: document.getElementById('collectionSongsEmptyState'),
 };
 
 
@@ -310,8 +313,10 @@ async function loadSong(songId) {
         buildNavigationOrder();
         renderSongDisplay();
         sendToProjector();
+        return true;
     } catch (error) {
         console.error('Error loading song:', error);
+        return false;
     }
 }
 
@@ -383,9 +388,6 @@ function renderSongList() {
         </div>
     `).join('');
 
-    elements.songList.querySelectorAll('.song-item').forEach(item => {
-        item.addEventListener('click', () => loadSong(parseInt(item.dataset.id)));
-    });
 }
 
 
@@ -414,6 +416,10 @@ function renderSongDisplay() {
     }
 
     renderSongList();
+    if (state.openCollection) {
+        try { renderCollectionDetail(); }
+        catch (e) { console.error('renderCollectionDetail:', e); }
+    }
 }
 
 function renderLyrics() {
@@ -425,13 +431,6 @@ function renderLyrics() {
             <div class="verse-card-text">${escapeHtml(verse.text)}</div>
         </div>
     `).join('');
-
-    elements.lyricsScroll.querySelectorAll('.verse-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const idx = parseInt(card.dataset.index, 10);
-            selectVerse(idx);
-        });
-    });
 
     scrollActiveVerseIntoView();
 }
@@ -495,15 +494,6 @@ function renderQuickNav() {
     html += '</div>';
     elements.quickNav.innerHTML = html;
 
-    elements.quickNav.querySelectorAll('.nav-flow-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const navPos = parseInt(btn.dataset.navPos);
-            state.navPosition = navPos;
-            state.currentVerseIndex = state.navigationOrder[navPos];
-            renderSongDisplay();
-            sendToProjector();
-        });
-    });
 }
 
 
@@ -666,6 +656,7 @@ async function importFiles(files) {
 
     const formData = new FormData();
     let importedCount = 0;
+    let lastError = '';
 
     try {
         for (const file of files) {
@@ -678,15 +669,25 @@ async function importFiles(files) {
                 if (response.ok) {
                     const result = await response.json();
                     importedCount += result.imported;
+                } else {
+                    const detail = await response.text().catch(() => '');
+                    lastError = detail || `Import failed (${response.status})`;
+                    console.error(`Import failed for ${file.name}:`, response.status, detail);
                 }
             } catch (error) {
+                lastError = 'Could not reach the server — try restarting the app';
                 console.error(`Error importing ${file.name}:`, error);
             }
         }
 
         if (importedCount > 0) {
             updateStatus(`Imported ${importedCount} song${importedCount !== 1 ? 's' : ''}`);
-            fetchSongs();
+            await fetchSongs();
+            openLibraryTab();
+        } else if (lastError) {
+            updateStatus(lastError);
+        } else {
+            updateStatus('No songs were imported from that file');
         }
 
         closeImportModal();
@@ -994,9 +995,21 @@ function closeAboutModal() {
 }
 
 
+function sameCollectionId(a, b) {
+    return a != null && b != null && Number(a) === Number(b);
+}
+
+
+/** Collection GETs must bypass WebView cache or the sidebar stays stale until restart. */
+function collectionApiUrl(path) {
+    const sep = path.includes('?') ? '&' : '?';
+    return `${API_URL}${path}${sep}_=${Date.now()}`;
+}
+
+
 async function fetchCollections() {
     try {
-        const response = await fetch(`${API_URL}/collections`);
+        const response = await fetch(collectionApiUrl('/collections'), { cache: 'no-store' });
         if (!response.ok) throw new Error('Failed');
         state.collections = await response.json();
         renderCollectionList();
@@ -1006,20 +1019,50 @@ async function fetchCollections() {
 }
 
 
-async function openCollectionDetail(collectionId) {
+async function openCollectionDetail(collectionId, { showView = true } = {}) {
     try {
-        const response = await fetch(`${API_URL}/collections/${collectionId}`);
+        const response = await fetch(collectionApiUrl(`/collections/${collectionId}`), {
+            cache: 'no-store'
+        });
         if (!response.ok) throw new Error('Failed');
         state.openCollection = await response.json();
-        state.collectionPosition = state.openCollection.songs.findIndex(
-            s => s.song_id === state.currentSong?.id
-        );
+        if (showView) {
+            state.collectionPosition = state.openCollection.songs.findIndex(
+                s => s.song_id === state.currentSong?.id
+            );
+        } else if (
+            state.collectionPosition < 0 ||
+            state.collectionPosition >= state.openCollection.songs.length
+        ) {
+            state.collectionPosition = state.openCollection.songs.findIndex(
+                s => s.song_id === state.currentSong?.id
+            );
+        }
         renderCollectionDetail();
-        document.getElementById('collectionsListView').classList.add('hidden');
-        document.getElementById('collectionDetailView').classList.remove('hidden');
+        if (showView) {
+            document.getElementById('collectionsListView').classList.add('hidden');
+            document.getElementById('collectionDetailView').classList.remove('hidden');
+        }
     } catch (e) {
         console.error('openCollectionDetail:', e);
     }
+}
+
+
+function appendSongToOpenCollection(collectionId, entryId) {
+    if (!state.openCollection || !state.currentSong) return;
+    if (!sameCollectionId(state.openCollection.id, collectionId)) return;
+    const songs = state.openCollection.songs;
+    if (songs.some(s => s.song_id === state.currentSong.id)) return;
+    songs.push({
+        id: entryId,
+        song_id: state.currentSong.id,
+        title: state.currentSong.title,
+        author: state.currentSong.author || null,
+        position: songs.length + 1
+    });
+    state.collectionPosition = songs.length - 1;
+    renderCollectionDetail();
 }
 
 
@@ -1032,20 +1075,31 @@ function closeCollectionDetail() {
 }
 
 
-async function createCollection(name) {
+async function createCollection(name, { switchTab = false, openDetail = false } = {}) {
     try {
+        console.log('[Collections] Creating collection:', name);
         const response = await fetch(`${API_URL}/collections`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name })
         });
-        if (!response.ok) throw new Error('Failed');
+        if (!response.ok) {
+            const text = await response.text();
+            console.error('[Collections] Create failed:', response.status, text);
+            throw new Error('Failed');
+        }
         const { id } = await response.json();
-        await openCollectionDetail(id);
-        openCollectionsTab();
+        console.log('[Collections] Created collection with id:', id);
+        await fetchCollections();
+        if (switchTab) {
+            openCollectionsTab();
+            if (openDetail) await openCollectionDetail(id);
+        }
+        updateStatus('Collection created');
         return id;
     } catch (e) {
         console.error('createCollection:', e);
+        updateStatus('Could not create collection');
         return null;
     }
 }
@@ -1059,6 +1113,11 @@ async function renameCollection(collectionId, name) {
             body: JSON.stringify({ name })
         });
         if (state.openCollection) state.openCollection.name = name;
+        const idx = state.collections.findIndex(c => sameCollectionId(c.id, collectionId));
+        if (idx !== -1) {
+            state.collections[idx].name = name;
+            renderCollectionList();
+        }
     } catch (e) {
         console.error('renameCollection:', e);
     }
@@ -1077,21 +1136,31 @@ async function deleteOpenCollection() {
 
 
 async function addToCollection(collectionId) {
-    if (!state.currentSong) return;
+    if (!state.currentSong) {
+        console.warn('[Collections] addToCollection called but no song selected');
+        updateStatus('Select a song first');
+        return;
+    }
     try {
+        console.log('[Collections] Adding song', state.currentSong.id, 'to collection', collectionId);
         const response = await fetch(`${API_URL}/collections/${collectionId}/songs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ song_id: state.currentSong.id })
         });
-        if (!response.ok) throw new Error('Failed');
-        updateStatus('Added to collection');
-        if (state.openCollection?.id === collectionId) {
-            await openCollectionDetail(collectionId);
+        if (!response.ok) {
+            const text = await response.text();
+            console.error('[Collections] Add failed:', response.status, text);
+            throw new Error('Failed');
         }
+        const result = await response.json();
+        document.getElementById('collectionPicker').classList.remove('open');
+        appendSongToOpenCollection(collectionId, result.entry_id);
         await fetchCollections();
+        updateStatus('Added to collection');
     } catch (e) {
         console.error('addToCollection:', e);
+        updateStatus('Could not add song to collection');
     }
 }
 
@@ -1134,10 +1203,19 @@ async function moveCollectionSong(entryId, direction) {
 }
 
 
+function scrollActiveCollectionSongIntoView() {
+    requestAnimationFrame(() => {
+        const active = document.querySelector('#collectionSongItems .collection-song-item.active-song');
+        active?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+}
+
+
 function renderCollectionList() {
     const items = document.getElementById('collectionItems');
-    const empty = document.getElementById('collectionEmptyState');
+    const empty = elements.collectionEmptyState;
     const count = document.getElementById('collectionCount');
+    const openId = state.openCollection?.id;
 
     count.textContent = `${state.collections.length} collection${state.collections.length !== 1 ? 's' : ''}`;
 
@@ -1150,7 +1228,7 @@ function renderCollectionList() {
 
     empty.style.display = 'none';
     items.innerHTML = state.collections.map(c => `
-        <div class="collection-item" data-id="${c.id}">
+        <div class="collection-item ${openId != null && sameCollectionId(openId, c.id) ? 'active' : ''}" data-id="${c.id}">
             <div class="collection-item-info">
                 <div class="collection-item-name">${escapeHtml(c.name)}</div>
                 <div class="collection-item-meta">${c.song_count} song${c.song_count !== 1 ? 's' : ''}</div>
@@ -1161,19 +1239,26 @@ function renderCollectionList() {
         </div>
     `).join('');
 
-    items.querySelectorAll('.collection-item').forEach(el => {
-        el.addEventListener('click', () => openCollectionDetail(parseInt(el.dataset.id)));
-    });
 }
 
 
 function renderCollectionDetail() {
     if (!state.openCollection) return;
 
-    document.getElementById('collectionNameInput').value = state.openCollection.name;
+    const nameInput = document.getElementById('collectionNameInput');
+    if (document.activeElement !== nameInput) {
+        nameInput.value = state.openCollection.name;
+    }
+
+    const addCurrentBtn = document.getElementById('addCurrentSongToCollectionBtn');
+    if (addCurrentBtn) {
+        const canAdd = Boolean(state.currentSong);
+        addCurrentBtn.classList.toggle('hidden', !canAdd);
+        addCurrentBtn.disabled = !canAdd;
+    }
 
     const container = document.getElementById('collectionSongItems');
-    const empty = document.getElementById('collectionSongsEmptyState');
+    const empty = elements.collectionSongsEmptyState;
     const songs = state.openCollection.songs;
 
     if (songs.length === 0) {
@@ -1206,37 +1291,6 @@ function renderCollectionDetail() {
             `;
         }).join('');
 
-        container.querySelectorAll('.collection-song-item').forEach(el => {
-            el.addEventListener('click', (e) => {
-                if (e.target.closest('.collection-song-controls')) return;
-                const songId = parseInt(el.dataset.songId);
-                const entryId = parseInt(el.dataset.entryId);
-                state.collectionPosition = state.openCollection.songs.findIndex(s => s.id === entryId);
-                loadSong(songId);
-                renderCollectionDetail();
-            });
-        });
-
-        container.querySelectorAll('.collection-song-btn.up').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                moveCollectionSong(parseInt(btn.dataset.entryId), -1);
-            });
-        });
-
-        container.querySelectorAll('.collection-song-btn.down').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                moveCollectionSong(parseInt(btn.dataset.entryId), 1);
-            });
-        });
-
-        container.querySelectorAll('.collection-song-btn.remove').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                removeFromCollection(parseInt(btn.dataset.entryId));
-            });
-        });
     }
 
     const total = songs.length;
@@ -1244,18 +1298,19 @@ function renderCollectionDetail() {
     const posEl = document.getElementById('collectionPosition');
     posEl.textContent = total === 0 ? '—' : pos >= 0 ? `${pos + 1} / ${total}` : `— / ${total}`;
     document.getElementById('collectionPrevBtn').disabled = pos <= 0;
-    document.getElementById('collectionNextBtn').disabled = pos < 0 || pos >= total - 1;
+    document.getElementById('collectionNextBtn').disabled = pos >= total - 1;
+
+    scrollActiveCollectionSongIntoView();
 }
 
 
-function navigateCollection(direction) {
+async function navigateCollection(direction) {
     if (!state.openCollection) return;
     const songs = state.openCollection.songs;
     const newPos = state.collectionPosition + direction;
     if (newPos < 0 || newPos >= songs.length) return;
     state.collectionPosition = newPos;
-    loadSong(songs[newPos].song_id);
-    renderCollectionDetail();
+    await loadSong(songs[newPos].song_id);
 }
 
 
@@ -1275,26 +1330,30 @@ function openCollectionsTab() {
 }
 
 
-function toggleCollectionPicker() {
+async function toggleCollectionPicker() {
     const picker = document.getElementById('collectionPicker');
     const isOpen = picker.classList.contains('open');
+    console.log('[Collections] Toggle picker, currently open:', isOpen);
     if (isOpen) {
         picker.classList.remove('open');
         return;
     }
+    if (!state.currentSong) {
+        updateStatus('Select a song first');
+        return;
+    }
+    await fetchCollections();
     const list = document.getElementById('collectionPickerList');
-    list.innerHTML = state.collections.map(c => `
-        <button type="button" class="collection-picker-item" data-id="${c.id}">
-            ${escapeHtml(c.name)}
-            <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">${c.song_count}</span>
-        </button>
-    `).join('');
-    list.querySelectorAll('.collection-picker-item').forEach(btn => {
-        btn.addEventListener('click', () => {
-            addToCollection(parseInt(btn.dataset.id));
-            picker.classList.remove('open');
-        });
-    });
+    if (state.collections.length === 0) {
+        list.innerHTML = '<p class="collection-picker-empty">No collections yet — create one below.</p>';
+    } else {
+        list.innerHTML = state.collections.map(c => `
+            <button type="button" class="collection-picker-item" data-id="${c.id}">
+                ${escapeHtml(c.name)}
+                <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">${c.song_count}</span>
+            </button>
+        `).join('');
+    }
     picker.classList.add('open');
 }
 
@@ -1616,10 +1675,45 @@ function initMenuEvents() {
     });
     on('menu-toggle-projector', () => toggleProjector());
     on('menu-blank-screen', () => toggleBlank());
+    on('projector-closed', () => {
+        state.projectorOpen = false;
+        elements.projectorBtn.innerHTML = `
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="2" y="4" width="16" height="10" rx="1"/>
+                <path d="M6 17h8"/>
+                <path d="M10 14v3"/>
+            </svg>
+            Open Projector
+        `;
+    });
 }
 
 
 function initEventListeners() {
+    // Delegation listeners for all dynamically-rendered lists. These are
+    // attached once to stable container elements so they survive every
+    // innerHTML rebuild — per-element listeners silently stop firing after
+    // DOM rebuilds in Tauri's WKWebView on macOS.
+    elements.songList.addEventListener('click', (e) => {
+        const item = e.target.closest('.song-item');
+        if (item) loadSong(parseInt(item.dataset.id));
+    });
+
+    elements.lyricsScroll.addEventListener('click', (e) => {
+        const card = e.target.closest('.verse-card');
+        if (card) selectVerse(parseInt(card.dataset.index, 10));
+    });
+
+    elements.quickNav.addEventListener('click', (e) => {
+        const btn = e.target.closest('.nav-flow-btn');
+        if (!btn) return;
+        const navPos = parseInt(btn.dataset.navPos);
+        state.navPosition = navPos;
+        state.currentVerseIndex = state.navigationOrder[navPos];
+        renderSongDisplay();
+        sendToProjector();
+    });
+
     elements.searchInput.addEventListener('input', (e) => {
         searchSongs(e.target.value);
     });
@@ -1746,31 +1840,44 @@ function initEventListeners() {
 
     // Sidebar tabs
     document.getElementById('libraryTabBtn').addEventListener('click', openLibraryTab);
-    document.getElementById('collectionsTabBtn').addEventListener('click', () => {
+    document.getElementById('collectionsTabBtn').addEventListener('click', async () => {
         openCollectionsTab();
-        fetchCollections();
+        await fetchCollections();
+        if (state.openCollection?.id != null) {
+            await openCollectionDetail(state.openCollection.id, { showView: false });
+        }
     });
 
-    // Collection list
-    document.getElementById('newCollectionBtn').addEventListener('click', () => {
-        createCollection('New Collection');
+    // Collection list - create new collection but stay in library so user can add songs
+    document.getElementById('newCollectionBtn').addEventListener('click', async () => {
+        const id = await createCollection('New Collection');
+        if (id) {
+            updateStatus('Collection created — select a song and use "Add to Collection"');
+        }
     });
 
     // Collection detail
     document.getElementById('backToCollectionsBtn').addEventListener('click', closeCollectionDetail);
     document.getElementById('deleteCollectionBtn').addEventListener('click', deleteOpenCollection);
+    document.getElementById('goToLibraryBtn')?.addEventListener('click', openLibraryTab);
 
     let renameTimeout;
     document.getElementById('collectionNameInput').addEventListener('input', (e) => {
         clearTimeout(renameTimeout);
+        const value = e.target.value;
         renameTimeout = setTimeout(() => {
-            if (state.openCollection) renameCollection(state.openCollection.id, e.target.value);
+            if (state.openCollection) renameCollection(state.openCollection.id, value);
         }, 600);
     });
 
     // Collection navigation
     document.getElementById('collectionPrevBtn').addEventListener('click', () => navigateCollection(-1));
     document.getElementById('collectionNextBtn').addEventListener('click', () => navigateCollection(1));
+
+    document.getElementById('addCurrentSongToCollectionBtn')?.addEventListener('click', async () => {
+        if (!state.openCollection || !state.currentSong) return;
+        await addToCollection(state.openCollection.id);
+    });
 
     // Add to collection button
     document.getElementById('addToCollectionBtn').addEventListener('click', (e) => {
@@ -1785,11 +1892,47 @@ function initEventListeners() {
 
     // Close pickers when clicking outside
     document.addEventListener('click', (e) => {
-        if (!e.target.closest('#addToCollectionBtn') && !e.target.closest('#collectionPicker')) {
+        if (!e.target.closest('.add-to-collection-wrapper')) {
             document.getElementById('collectionPicker').classList.remove('open');
         }
         if (!e.target.closest('#exportBtn') && !e.target.closest('#exportMenu')) {
             closeExportMenu();
+        }
+    });
+
+    // All collection click handling via delegation — one stable listener per
+    // container survives every innerHTML rebuild. Per-element listeners silently
+    // stop firing after DOM rebuilds in Tauri's WKWebView on macOS.
+
+    document.getElementById('collectionItems').addEventListener('click', (e) => {
+        const item = e.target.closest('.collection-item');
+        if (item) openCollectionDetail(parseInt(item.dataset.id));
+    });
+
+    document.getElementById('collectionSongItems').addEventListener('click', (e) => {
+        const upBtn = e.target.closest('.collection-song-btn.up');
+        if (upBtn) { e.stopPropagation(); moveCollectionSong(parseInt(upBtn.dataset.entryId), -1); return; }
+
+        const downBtn = e.target.closest('.collection-song-btn.down');
+        if (downBtn) { e.stopPropagation(); moveCollectionSong(parseInt(downBtn.dataset.entryId), 1); return; }
+
+        const removeBtn = e.target.closest('.collection-song-btn.remove');
+        if (removeBtn) { e.stopPropagation(); removeFromCollection(parseInt(removeBtn.dataset.entryId)); return; }
+
+        const item = e.target.closest('.collection-song-item');
+        if (!item || !state.openCollection) return;
+        const songId = parseInt(item.dataset.songId);
+        const entryId = parseInt(item.dataset.entryId);
+        state.collectionPosition = state.openCollection.songs.findIndex(s => s.id === entryId);
+        loadSong(songId);
+        scrollActiveCollectionSongIntoView();
+    });
+
+    document.getElementById('collectionPickerList').addEventListener('click', (e) => {
+        const btn = e.target.closest('.collection-picker-item');
+        if (btn) {
+            e.stopPropagation();
+            addToCollection(parseInt(btn.dataset.id));
         }
     });
 }
@@ -1822,7 +1965,6 @@ function syncPreviewScale() {
 window.addEventListener('resize', syncPreviewScale);
 
 document.addEventListener('DOMContentLoaded', async () => {
-    await initApiUrl();
     initEventListeners();
     initSettingsDialog();
     initMenuEvents();
@@ -1840,6 +1982,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     await loadSettings();
+    openLibraryTab();
     fetchSongs();
     fetchCollections();
 });

@@ -17,34 +17,85 @@ const APP_ICON: &[u8] = include_bytes!("../icons/icon.icns");
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-use tokio::sync::OnceCell;
-
-static SERVER_PORT: OnceCell<u16> = OnceCell::const_new();
-
-#[tauri::command]
-fn get_api_port() -> u16 {
-    *SERVER_PORT.get().unwrap_or(&8765)
-}
 
 #[tauri::command]
 fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+fn monitors_match(a: &tauri::Monitor, b: &tauri::Monitor) -> bool {
+    if let (Some(na), Some(nb)) = (a.name(), b.name()) {
+        if na == nb {
+            return true;
+        }
+    }
+    let pa = a.position();
+    let pb = b.position();
+    let sa = a.size();
+    let sb = b.size();
+    pa.x == pb.x && pa.y == pb.y && sa.width == sb.width && sa.height == sb.height
+}
+
+fn pick_projector_monitor<'a>(
+    monitors: &'a [tauri::Monitor],
+    operator: Option<&tauri::Monitor>,
+    primary: Option<&tauri::Monitor>,
+) -> &'a tauri::Monitor {
+    if monitors.len() == 1 {
+        return &monitors[0];
+    }
+
+    // Prefer any display that is not the operator window's current monitor.
+    if let Some(op) = operator {
+        if let Some(ext) = monitors.iter().find(|m| !monitors_match(m, op)) {
+            return ext;
+        }
+    }
+
+    // If we cannot detect the operator display, send output to the non-primary
+    // monitor (typical external projector / HDMI setup).
+    if let Some(prim) = primary {
+        if let Some(ext) = monitors.iter().find(|m| !monitors_match(m, prim)) {
+            return ext;
+        }
+    }
+
+    // Last resort: largest display.
+    monitors
+        .iter()
+        .max_by_key(|m| {
+            let s = m.size();
+            s.width * s.height
+        })
+        .unwrap_or(&monitors[0])
+}
+
 #[tauri::command]
 fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
-    let monitors = app.available_monitors().map_err(|e| e.to_string())?;
-    let monitor_list: Vec<_> = monitors.into_iter().collect();
+    if app.get_webview_window("projector").is_some() {
+        return Ok(());
+    }
 
-    let (position, size) = if monitor_list.len() > 1 {
-        let secondary = &monitor_list[1];
-        (secondary.position().clone(), secondary.size().clone())
-    } else {
-        let primary = &monitor_list[0];
-        (primary.position().clone(), primary.size().clone())
-    };
+    let monitor_list = app.available_monitors().map_err(|e| e.to_string())?;
+    if monitor_list.is_empty() {
+        return Err("No monitors available".to_string());
+    }
 
-    let _projector = WebviewWindowBuilder::new(
+    let operator_monitor = app
+        .get_webview_window("operator")
+        .and_then(|w| w.current_monitor().ok().flatten());
+    let primary_monitor = app.primary_monitor().ok().flatten();
+
+    let target = pick_projector_monitor(
+        &monitor_list,
+        operator_monitor.as_ref(),
+        primary_monitor.as_ref(),
+    );
+
+    let position = target.position();
+    let size = target.size();
+
+    let projector = WebviewWindowBuilder::new(
         &app,
         "projector",
         WebviewUrl::App("projector.html".into()),
@@ -52,11 +103,24 @@ fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
     .title("HymnBeam — Projector")
     .position(position.x as f64, position.y as f64)
     .inner_size(size.width as f64, size.height as f64)
-    .fullscreen(true)
     .decorations(false)
     .always_on_top(true)
     .build()
     .map_err(|e| e.to_string())?;
+
+    // Move to the target display first, then enter fullscreen on that screen.
+    let _ = projector.set_fullscreen(true);
+
+    // Notify the operator when the projector window is closed (e.g. Escape key)
+    // so the operator can reset its projectorOpen state and update the button.
+    let app_clone = app.clone();
+    projector.on_window_event(move |event| {
+        if let tauri::WindowEvent::Destroyed = event {
+            if let Some(op) = app_clone.get_webview_window("operator") {
+                let _ = op.emit("projector-closed", ());
+            }
+        }
+    });
 
     Ok(())
 }
@@ -78,23 +142,20 @@ fn send_to_projector(app: tauri::AppHandle, event: String, payload: String) -> R
 }
 
 fn main() {
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+    db::set_db_path(db::init_db_path());
+    db::init_db().expect("Failed to initialize database");
 
-    let port = rt.block_on(async {
-        db::set_db_path(db::init_db_path());
-        db::init_db().expect("Failed to initialize database");
-
-        let port = api::start_server().await.expect("Failed to start API server");
-        SERVER_PORT.set(port).ok();
-        port
-    });
-
-    println!("HymnBeam API server running on http://127.0.0.1:{}", port);
+    println!("HymnBeam starting (API via axum://localhost custom protocol)");
 
     tauri::Builder::default()
+        // Mount our axum router onto a custom URI scheme handler. The webview
+        // calls fetch("axum://localhost/songs") and the request is routed
+        // directly through Tauri's IPC — no TCP server, no port, no CORS.
+        // This MUST be registered before .setup() so the protocol is
+        // available when the webview is created.
+        .plugin(tauri_plugin_axum::init(api::create_router()))
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
-            get_api_port,
             get_app_version,
             open_projector_window,
             close_projector_window,

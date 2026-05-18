@@ -17,7 +17,14 @@ let currentSongId = null;
 let currentVerses = [];
 let songFontSize = null;
 let currentSettings = null;
-let apiBase = null;
+const apiBase = (() => {
+    if (!window.__TAURI_INTERNALS__ && !window.__TAURI__) {
+        return 'http://127.0.0.1:8765';
+    }
+    const isWin = navigator.platform?.toLowerCase().includes('win') ||
+                  navigator.userAgent?.toLowerCase().includes('windows');
+    return isWin ? 'http://axum.localhost' : 'axum://localhost';
+})();
 
 const FONT_STACKS = {
     'Montserrat':       "'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif",
@@ -104,10 +111,7 @@ function refreshVerseLabel() {
 }
 
 async function loadInitialSettings() {
-    if (!window.__TAURI__) return;
     try {
-        const port = await window.__TAURI__.core.invoke('get_api_port');
-        apiBase = `http://127.0.0.1:${port}`;
         const res = await fetch(`${apiBase}/settings`);
         if (res.ok) applySettings(await res.json());
     } catch (e) {
