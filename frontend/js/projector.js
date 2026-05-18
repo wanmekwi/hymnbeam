@@ -129,7 +129,7 @@ document.body.appendChild(measureEl);
 
 function updateDisplay(data) {
     const { text, label, isBlank, title, author, musical_key, songId, songNumber, verses,
-            hasPrev, hasNext } = data;
+            hasPrev, hasNext, isBible } = data;
 
     if (isBlank) {
         elements.blankScreen.classList.add('active');
@@ -137,16 +137,31 @@ function updateDisplay(data) {
         elements.songMetaBar.classList.remove('visible');
         elements.verseNavUp.classList.remove('visible');
         elements.verseNavDown.classList.remove('visible');
+        elements.projector.classList.remove('bible-mode');
         return;
     }
 
     elements.blankScreen.classList.remove('active');
-    elements.verseNavUp.classList.toggle('visible', !!hasPrev);
-    elements.verseNavDown.classList.toggle('visible', !!hasNext);
+    elements.projector.classList.toggle('bible-mode', !!isBible);
+
+    if (isBible) {
+        // Bible mode: no chevrons, no meta bar
+        elements.verseNavUp.classList.remove('visible');
+        elements.verseNavDown.classList.remove('visible');
+        elements.songMetaBar.classList.remove('visible');
+    } else {
+        elements.verseNavUp.classList.toggle('visible', !!hasPrev);
+        elements.verseNavDown.classList.toggle('visible', !!hasNext);
+    }
 
     if (songId !== currentSongId) {
         currentSongId = songId;
-        updateSongMeta(title, author, musical_key, songNumber || songId);
+        if (!isBible) {
+            updateSongMeta(title, author, musical_key, songNumber || songId);
+        } else {
+            elements.songTitleBar.textContent = title || '';
+            elements.songTitleBar.classList.toggle('visible', !!title);
+        }
         currentVerses = verses && verses.length ? verses : (text ? [text] : []);
         songFontSize = computeSongFontSize(currentVerses);
     }
@@ -204,33 +219,52 @@ function updateSongMeta(title, author, musical_key, songNumber) {
 
 
 const WIDTH_FILL = 0.9;
+const BIBLE_WIDTH_VW = 0.82; // matches the CSS 82vw on .bible-mode .lyrics-text
 const BAR_GAP_PX = 24;
 const MIN_FONT_PX = 16;
 
-// Find the vertical band the lyrics may occupy: the gap between the title bar
-// and the meta bar, minus a small clearance so the verse never visually
-// touches either. Bars with `display: none` (via .layout-hide-*) report a
-// zero-height rect, so they correctly fall back to the screen edge.
 function availableLyricBand() {
     const containerRect = elements.lyricsContainer.getBoundingClientRect();
     const titleRect = elements.songTitleBar.getBoundingClientRect();
     const metaRect = elements.songMetaBar.getBoundingClientRect();
-
     const top = titleRect.height > 0 ? titleRect.bottom + BAR_GAP_PX : containerRect.top;
     const bottom = metaRect.height > 0 ? metaRect.top - BAR_GAP_PX : containerRect.bottom;
     return Math.max(MIN_FONT_PX * 2, bottom - top);
 }
 
-// Measure the largest font-size at which `text` fits the available band.
-// `white-space: pre` means lines never wrap, so width and height scale
-// near-linearly with font-size — three measure/correct passes get within a
-// sub-pixel of the limit, and the round-down guarantees we never tip over.
+// For song verses (white-space: pre): size so the longest line fits the width
+// AND all lines fit the height band — whichever is tighter wins.
+// For Bible verses (white-space: normal, fixed width): text wraps within the
+// target width, so we binary-search on height. Binary search is necessary here
+// because multiplying by the ratio oscillates when line count changes discretely
+// (e.g. the font alternates between 6-line and 10-line wrapping for long verses).
 function measureFitSize(text) {
     measureEl.textContent = text;
     const cw = elements.lyricsContainer.clientWidth || window.innerWidth;
+
+    if (elements.projector.classList.contains('bible-mode')) {
+        const targetW = cw * BIBLE_WIDTH_VW;
+        // Use actual available band (accounts for title bar height) with a small
+        // margin so the text doesn't crowd the edges.
+        const targetH = availableLyricBand() * 0.92;
+        measureEl.style.whiteSpace = 'normal';
+        measureEl.style.width = targetW + 'px';
+        let lo = MIN_FONT_PX, hi = 300;
+        for (let pass = 0; pass < 12; pass++) {
+            const mid = (lo + hi) / 2;
+            measureEl.style.fontSize = mid + 'px';
+            const rect = measureEl.getBoundingClientRect();
+            if (!rect.height) break;
+            if (rect.height > targetH) hi = mid;
+            else lo = mid;
+        }
+        measureEl.style.whiteSpace = '';
+        measureEl.style.width = '';
+        return Math.max(MIN_FONT_PX, Math.floor(lo * 10) / 10);
+    }
+
     const targetW = cw * WIDTH_FILL;
     const targetH = availableLyricBand();
-
     let fontSize = 100;
     for (let pass = 0; pass < 3; pass++) {
         measureEl.style.fontSize = fontSize + 'px';
@@ -238,7 +272,6 @@ function measureFitSize(text) {
         if (!rect.width || !rect.height) return null;
         fontSize *= Math.min(targetW / rect.width, targetH / rect.height);
     }
-
     return Math.max(MIN_FONT_PX, Math.floor(fontSize * 10) / 10);
 }
 

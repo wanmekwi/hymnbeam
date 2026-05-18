@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::bible::{get_books, get_chapter, search_bible, SearchHit};
 use crate::collections::{
     add_song_to_collection, create_collection, delete_collection, get_all_collections,
     get_collection, remove_song_from_collection, rename_collection, reorder_collection_songs,
@@ -381,6 +382,48 @@ async fn put_app_settings(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn handle_bible_books() -> impl IntoResponse {
+    match get_books() {
+        Ok(books) => Json(books).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct BibleChapterPath {
+    book: String,
+    chapter: u32,
+}
+
+async fn handle_bible_chapter(Path(p): Path<BibleChapterPath>) -> impl IntoResponse {
+    match get_chapter(&p.book, p.chapter) {
+        Ok(verses) => Json(verses).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct BibleSearchQuery {
+    #[serde(default)]
+    q: String,
+    #[serde(default = "default_bible_limit")]
+    limit: u32,
+}
+
+fn default_bible_limit() -> u32 {
+    50
+}
+
+async fn handle_bible_search(Query(params): Query<BibleSearchQuery>) -> impl IntoResponse {
+    if params.q.trim().is_empty() {
+        return Json(Vec::<SearchHit>::new()).into_response();
+    }
+    match search_bible(&params.q, params.limit) {
+        Ok(hits) => Json(hits).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 pub fn create_router() -> Router {
     // The router is mounted onto a Tauri custom URI scheme handler (see
     // tauri-plugin-axum in main.rs), so requests come straight from the
@@ -413,4 +456,7 @@ pub fn create_router() -> Router {
         .route("/settings", get(get_app_settings).put(put_app_settings))
         .route("/backgrounds", post(upload_background))
         .route("/backgrounds/{name}", get(serve_background))
+        .route("/bible/books", get(handle_bible_books))
+        .route("/bible/search", get(handle_bible_search))
+        .route("/bible/{book}/{chapter}", get(handle_bible_chapter))
 }

@@ -139,8 +139,28 @@ pub fn init_db() -> SqliteResult<()> {
             content='verses',
             content_rowid='id'
         );
+
+        CREATE TABLE IF NOT EXISTS bible_verses (
+            id      INTEGER PRIMARY KEY,
+            book    TEXT    NOT NULL,
+            name    TEXT    NOT NULL,
+            chapter INTEGER NOT NULL,
+            verse   INTEGER NOT NULL,
+            text    TEXT    NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bible_bk_ch
+            ON bible_verses(book, chapter);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS bible_fts USING fts5(
+            text,
+            content='bible_verses',
+            content_rowid='id'
+        );
         "#,
     )?;
+
+    crate::bible::ensure_bible_loaded(&conn)?;
 
     Ok(())
 }

@@ -1315,6 +1315,8 @@ async function navigateCollection(direction) {
 
 
 function openLibraryTab() {
+    document.getElementById('biblePanel').classList.add('hidden');
+    document.getElementById('bibleTabBtn').classList.remove('active');
     document.getElementById('libraryPanel').classList.remove('hidden');
     document.getElementById('collectionsPanel').classList.add('hidden');
     document.getElementById('libraryTabBtn').classList.add('active');
@@ -1323,6 +1325,8 @@ function openLibraryTab() {
 
 
 function openCollectionsTab() {
+    document.getElementById('biblePanel').classList.add('hidden');
+    document.getElementById('bibleTabBtn').classList.remove('active');
     document.getElementById('libraryPanel').classList.add('hidden');
     document.getElementById('collectionsPanel').classList.remove('hidden');
     document.getElementById('libraryTabBtn').classList.remove('active');
@@ -1966,6 +1970,7 @@ window.addEventListener('resize', syncPreviewScale);
 
 document.addEventListener('DOMContentLoaded', async () => {
     initEventListeners();
+    initBibleListeners();
     initSettingsDialog();
     initMenuEvents();
 

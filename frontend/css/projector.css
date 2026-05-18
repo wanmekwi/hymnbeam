@@ -41,6 +41,19 @@ body {
     display: none;
 }
 
+.projector.bible-mode .song-meta-bar {
+    display: none;
+}
+
+.projector.bible-mode .lyrics-text {
+    white-space: normal;
+    word-break: break-word;
+    width: 82vw;
+    max-width: 82vw;
+    text-align: center;
+    line-height: 1.4;
+}
+
 .song-title-bar {
     position: absolute;
     top: 16px;

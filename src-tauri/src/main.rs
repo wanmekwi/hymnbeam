@@ -2,6 +2,7 @@
 
 mod api;
 mod backgrounds;
+mod bible;
 mod collections;
 mod db;
 mod export;
