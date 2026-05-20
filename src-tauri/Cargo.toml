@@ -1,6 +1,6 @@
 [package]
 name = "hymnbeam"
-version = "0.1.2"
+version = "0.1.3"
 description = "Church song lyrics projector"
 authors = ["HymnBeam"]
 license = "MIT"
