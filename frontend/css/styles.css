@@ -417,6 +417,20 @@ body {
     display: none;
 }
 
+.bible-display {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 24px 28px;
+    gap: 18px;
+    min-height: 0;
+    animation: fadeIn 0.3s ease;
+}
+
+.bible-display[hidden] {
+    display: none;
+}
+
 .content-placeholder[hidden] {
     display: none;
 }
@@ -627,8 +641,41 @@ body {
     word-break: break-word;
 }
 
+.verse-card-text em {
+    font-style: italic;
+}
+
 .verse-card.active .verse-card-text {
     color: var(--text-primary);
+}
+
+/* Bible verse card: number badge on the left, verse text beside it. */
+.bible-verse-card {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.bible-verse-num {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 6px;
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+}
+
+.verse-card.active .bible-verse-num {
+    color: #fff;
+    background: var(--accent);
 }
 
 /* Preview — compact, positioned at top right */
@@ -1747,6 +1794,15 @@ input.toggle:checked::before {
     background: var(--bg-tertiary);
 }
 
+.bible-book-cell.expanded {
+    background: var(--bg-tertiary);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.bible-book-cell.expanded .bible-book-abbr {
+    color: var(--accent);
+}
+
 .bible-book-abbr {
     font-size: 12px;
     font-weight: 700;
@@ -1764,10 +1820,13 @@ input.toggle:checked::before {
 }
 
 .bible-chapter-grid {
+    grid-column: 1 / -1;
     display: grid;
     grid-template-columns: repeat(6, 1fr);
     gap: 6px;
-    padding: 12px;
+    padding: 10px 12px 12px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
 }
 
 .bible-chapter-cell {
@@ -1777,6 +1836,7 @@ input.toggle:checked::before {
     padding: 10px 4px;
     cursor: pointer;
     background: var(--bg-tertiary);
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
     font-size: 13px;
     font-weight: 600;
@@ -1787,6 +1847,19 @@ input.toggle:checked::before {
 .bible-chapter-cell:hover {
     background: var(--accent);
     color: #fff;
+    border-color: var(--accent);
+}
+
+.bible-chapter-cell.selected {
+    background: var(--bg-elevated);
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.bible-chapter-cell.selected:hover {
+    background: var(--bg-elevated);
+    color: var(--accent);
 }
 
 .breadcrumb-seg {

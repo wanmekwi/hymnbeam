@@ -15,12 +15,12 @@ const BOOK_ABBR = {
     '65N':'Jud','66N':'Rev',
 };
 
-// Navigation stack stored at module level — more reliable than DOM properties.
 let _bibleNavStack = [];
 
 const bibleState = {
-    view: 'books',
+    view: 'list',
     books: [],
+    expandedBook: null,
     openBook: null,
     openChapter: null,
     verses: [],
@@ -52,7 +52,7 @@ function buildBibleVersesArray() {
 }
 
 function sendBiblePayload(payload) {
-    const frame = document.getElementById('previewFrame');
+    const frame = document.getElementById('biblePreviewFrame');
     if (frame && frame.contentWindow) {
         frame.contentWindow.postMessage({ type: 'update-lyrics', ...payload }, '*');
     }
@@ -74,7 +74,7 @@ async function openBibleTab() {
     if (bibleState.books.length === 0) {
         try {
             await fetchBibleBooks();
-            renderBibleBooks();
+            renderBibleAccordion();
         } catch (e) {
             console.error(e);
         }
@@ -85,15 +85,12 @@ async function openBibleTab() {
 
 function renderCurrentBibleView() {
     switch (bibleState.view) {
-        case 'books':   renderBibleBooks();    break;
-        case 'chapters':renderBibleChapters(); break;
-        case 'verses':  renderBibleVerses();   break;
-        case 'search':  renderBibleSearch();   break;
+        case 'list':   renderBibleAccordion(); break;
+        case 'search': renderBibleSearch();    break;
+        default:       renderBibleAccordion(); break;
     }
 }
 
-// segments: [{label, fn}] — each segment is a breadcrumb step; back button
-// navigates to the last segment's fn (one level up).
 function setBreadcrumb(segments) {
     _bibleNavStack = segments || [];
     const bc = document.getElementById('bibleBreadcrumb');
@@ -109,71 +106,77 @@ function setBreadcrumb(segments) {
     ).join('');
 }
 
-function renderBibleBooks() {
-    bibleState.view = 'books';
+function renderBibleAccordion() {
+    bibleState.view = 'list';
     setBreadcrumb([]);
     const list = document.getElementById('bibleContentList');
+    const scrollTop = list.scrollTop;
+
+    // A book cell, followed by its inline chapter grid when expanded. The
+    // chapter grid spans the full row (CSS grid-column: 1/-1) so it reads as
+    // an accordion panel dropping out of the books grid.
+    const bookCell = (b) => {
+        const expanded = bibleState.expandedBook === b.code;
+        let html = `
+            <div class="bible-book-cell ${expanded ? 'expanded' : ''}"
+                 data-code="${escapeHtml(b.code)}" title="${escapeHtml(b.name)}">
+                <span class="bible-book-abbr">${escapeHtml(BOOK_ABBR[b.code] || b.name.slice(0,3))}</span>
+                <span class="bible-book-name">${escapeHtml(b.name)}</span>
+            </div>`;
+        if (expanded) {
+            html += `<div class="bible-chapter-grid">` +
+                Array.from({ length: b.chapters }, (_, i) => i + 1).map(ch => {
+                    const selected = bibleState.openBook?.code === b.code &&
+                        bibleState.openChapter === ch;
+                    return `<div class="bible-chapter-cell ${selected ? 'selected' : ''}"
+                                 data-chapter="${ch}">${ch}</div>`;
+                }).join('') + `</div>`;
+        }
+        return html;
+    };
+
+    const section = (label, books) =>
+        `<div class="bible-section-label">${label}</div>` +
+        `<div class="bible-book-grid">${books.map(bookCell).join('')}</div>`;
+
     const ot = bibleState.books.filter(b => b.code.endsWith('O'));
     const nt = bibleState.books.filter(b => b.code.endsWith('N'));
-    const section = (title, books) => `
-        <div class="bible-section-label">${title}</div>
-        <div class="bible-book-grid">
-            ${books.map(b => `
-                <div class="bible-book-cell" data-code="${escapeHtml(b.code)}" title="${escapeHtml(b.name)}">
-                    <span class="bible-book-abbr">${escapeHtml(BOOK_ABBR[b.code] || b.name.slice(0,3))}</span>
-                    <span class="bible-book-name">${escapeHtml(b.name)}</span>
-                </div>
-            `).join('')}
-        </div>
-    `;
     list.innerHTML = section('Old Testament', ot) + section('New Testament', nt);
-}
-
-function renderBibleChapters() {
-    if (!bibleState.openBook) { renderBibleBooks(); return; }
-    const book = bibleState.openBook;
-    bibleState.view = 'chapters';
-    setBreadcrumb([
-        { label: book.name, fn: () => { bibleState.view = 'books'; renderBibleBooks(); } }
-    ]);
-    const list = document.getElementById('bibleContentList');
-    list.innerHTML = `
-        <div class="bible-chapter-grid">
-            ${Array.from({ length: book.chapters }, (_, i) => i + 1).map(ch =>
-                `<div class="bible-chapter-cell" data-chapter="${ch}">${ch}</div>`
-            ).join('')}
-        </div>
-    `;
+    list.scrollTop = scrollTop;
 }
 
 async function openBibleBook(code) {
-    const book = bibleState.books.find(b => b.code === code);
-    if (!book) return;
-    bibleState.openBook = book;
-    renderBibleChapters();
+    if (bibleState.expandedBook === code) {
+        bibleState.expandedBook = null;
+    } else {
+        bibleState.expandedBook = code;
+    }
+    renderBibleAccordion();
 }
 
 async function openBibleChapter(chapter) {
-    if (!bibleState.openBook) return;
+    const code = bibleState.expandedBook;
+    if (!code) return;
+    const book = bibleState.books.find(b => b.code === code);
+    if (!book) return;
+
+    bibleState.openBook = book;
     bibleState.activeVerse = null;
     bibleState.openChapter = chapter;
     try {
-        bibleState.verses = await fetchBibleChapter(bibleState.openBook.code, chapter);
+        bibleState.verses = await fetchBibleChapter(book.code, chapter);
     } catch (e) {
         console.error(e);
         return;
     }
-    bibleState.view = 'verses';
-    renderBibleVerses();
+    renderBibleAccordion();
+    renderBibleVerseGrid();
+    setContentView('bible');
 }
 
-// Convert [word] italic markers to <em>word</em> HTML.
-// Escapes all non-bracket content so it is safe to inject via innerHTML.
 function bibleTextToHtml(text) {
-    // Split on [word] markers, escape surrounding text, wrap markers in <em>
     return text.split(/(\[[^\]]+\])/).map((part, i) => {
         if (i % 2 === 1) {
-            // Italic segment: strip the brackets, escape, wrap in <em>
             const inner = escapeHtml(part.slice(1, -1));
             return `<em>${inner}</em>`;
         }
@@ -181,24 +184,28 @@ function bibleTextToHtml(text) {
     }).join('');
 }
 
-// Strip [word] markers to get plain text (used for measurement and FTS display).
 function bibleTextPlain(text) {
     return text.replace(/\[([^\]]+)\]/g, '$1');
 }
 
-function renderBibleVerses() {
+function renderBibleVerseGrid() {
     const book = bibleState.openBook;
     const ch = bibleState.openChapter;
-    setBreadcrumb([
-        { label: book.name, fn: () => { bibleState.view = 'books'; renderBibleBooks(); } },
-        { label: `${BOOK_ABBR[book.code] || book.name}  ${ch}`, fn: renderBibleChapters },
-    ]);
-    const list = document.getElementById('bibleContentList');
-    list.innerHTML = bibleState.verses.map(v => `
-        <div class="bible-verse-item ${bibleState.activeVerse === v.verse ? 'active-verse' : ''}"
+    if (!book || ch == null) return;
+
+    // Title shows the full reference — Book Chapter:Verse once a verse is
+    // active, Book Chapter while only the chapter is open.
+    const ref = bibleState.activeVerse != null
+        ? `${book.name} ${ch}:${bibleState.activeVerse}`
+        : `${book.name} ${ch}`;
+    document.getElementById('bibleDisplayTitle').textContent = ref;
+
+    const grid = document.getElementById('bibleVerseGrid');
+    grid.innerHTML = bibleState.verses.map(v => `
+        <div class="verse-card bible-verse-card ${bibleState.activeVerse === v.verse ? 'active' : ''}"
              data-verse="${v.verse}">
             <span class="bible-verse-num">${v.verse}</span>
-            <span class="bible-verse-text">${bibleTextToHtml(v.text)}</span>
+            <span class="verse-card-text">${bibleTextToHtml(v.text)}</span>
         </div>
     `).join('');
 }
@@ -243,12 +250,9 @@ function projectBibleVerse(book, bookName, chapter, verse, text) {
 
     sendBiblePayload(payload);
 
-    if (bibleState.view === 'verses') renderBibleVerses();
+    if (bibleState.openChapter != null) renderBibleVerseGrid();
 }
 
-
-// Parse a typed reference like "John 3:16", "1 Cor 13:4", "Ps 23:1".
-// Returns {book, chapter, verse} or null if the query isn't a reference.
 function parseReference(query) {
     const m = query.trim().match(/^(\d?\s*[a-zA-Z][\w ]*?)\s+(\d+):(\d+)\s*$/);
     if (!m) return null;
@@ -263,15 +267,12 @@ function parseReference(query) {
 function findBookByQuery(q) {
     if (!bibleState.books.length) return null;
     const norm = q.toLowerCase().replace(/[\s.]/g, '');
-    // 1. Exact abbreviation
     for (const b of bibleState.books) {
         if ((BOOK_ABBR[b.code] || '').toLowerCase() === norm) return b;
     }
-    // 2. Exact full name
     for (const b of bibleState.books) {
         if (b.name.toLowerCase().replace(/[\s.]/g, '') === norm) return b;
     }
-    // 3. Prefix match on name (min 2 chars)
     if (norm.length >= 2) {
         for (const b of bibleState.books) {
             if (b.name.toLowerCase().replace(/[\s.]/g, '').startsWith(norm)) return b;
@@ -283,13 +284,15 @@ function findBookByQuery(q) {
 async function lookupAndProjectReference({ book, chapter, verse }) {
     try {
         if (!bibleState.books.length) await fetchBibleBooks();
-        bibleState.openBook    = book;
+        bibleState.expandedBook = book.code;
+        bibleState.openBook = book;
         bibleState.openChapter = chapter;
-        bibleState.verses      = await fetchBibleChapter(book.code, chapter);
+        bibleState.verses = await fetchBibleChapter(book.code, chapter);
         const row = bibleState.verses.find(r => r.verse === verse);
         if (!row) return;
-        bibleState.view = 'verses';
-        renderBibleVerses();
+        renderBibleAccordion();
+        renderBibleVerseGrid();
+        setContentView('bible');
         projectBibleVerse(book.code, book.name, chapter, verse, row.text);
     } catch (e) {
         console.error('Reference lookup failed', e);
@@ -299,12 +302,10 @@ async function lookupAndProjectReference({ book, chapter, verse }) {
 function initBibleListeners() {
     document.getElementById('bibleTabBtn').addEventListener('click', openBibleTab);
 
-    // Breadcrumb: back button goes one level up (last segment's fn)
     document.getElementById('bibleBreadcrumbBack').addEventListener('click', () => {
         if (_bibleNavStack.length > 0) _bibleNavStack[_bibleNavStack.length - 1].fn();
     });
 
-    // Breadcrumb: clicking a segment navigates to that level
     document.getElementById('bibleBreadcrumbLabel').addEventListener('click', (e) => {
         const seg = e.target.closest('.breadcrumb-seg');
         if (!seg) return;
@@ -312,32 +313,17 @@ function initBibleListeners() {
         if (fn) fn();
     });
 
-    // Main content list — all navigation delegated here
     document.getElementById('bibleContentList').addEventListener('click', async (e) => {
-        const bookCell    = e.target.closest('.bible-book-cell');
+        const bookCell = e.target.closest('.bible-book-cell');
         const chapterCell = e.target.closest('.bible-chapter-cell');
-        const verseItem   = e.target.closest('.bible-verse-item');
-        const searchHit   = e.target.closest('.bible-search-hit');
+        const searchHit = e.target.closest('.bible-search-hit');
 
-        if (bookCell) {
-            await openBibleBook(bookCell.dataset.code);
-            return;
-        }
         if (chapterCell) {
             await openBibleChapter(parseInt(chapterCell.dataset.chapter, 10));
             return;
         }
-        if (verseItem) {
-            const v = parseInt(verseItem.dataset.verse, 10);
-            const row = bibleState.verses.find(r => r.verse === v);
-            if (!row) return;
-            projectBibleVerse(
-                bibleState.openBook.code,
-                bibleState.openBook.name,
-                bibleState.openChapter,
-                v,
-                row.text
-            );
+        if (bookCell) {
+            await openBibleBook(bookCell.dataset.code);
             return;
         }
         if (searchHit) {
@@ -345,11 +331,27 @@ function initBibleListeners() {
             const chapter = parseInt(searchHit.dataset.chapter, 10);
             const verse   = parseInt(searchHit.dataset.verse, 10);
             if (!book) return;
+            bibleState.expandedBook = book.code;
             bibleState.openBook = book;
             await openBibleChapter(chapter);
             const row = bibleState.verses.find(r => r.verse === verse);
             if (row) projectBibleVerse(book.code, book.name, chapter, verse, row.text);
         }
+    });
+
+    document.getElementById('bibleVerseGrid').addEventListener('click', (e) => {
+        const card = e.target.closest('.verse-card');
+        if (!card) return;
+        const v = parseInt(card.dataset.verse, 10);
+        const row = bibleState.verses.find(r => r.verse === v);
+        if (!row || !bibleState.openBook) return;
+        projectBibleVerse(
+            bibleState.openBook.code,
+            bibleState.openBook.name,
+            bibleState.openChapter,
+            v,
+            row.text
+        );
     });
 
     let searchTimer;
@@ -359,16 +361,7 @@ function initBibleListeners() {
         clearTimeout(searchTimer);
         if (!q) {
             if (bibleState.view === 'search') {
-                // Return to wherever the user was before searching
-                if (bibleState.openChapter != null) {
-                    bibleState.view = 'verses';
-                    renderBibleVerses();
-                } else if (bibleState.openBook) {
-                    bibleState.view = 'chapters';
-                    renderBibleChapters();
-                } else {
-                    renderBibleBooks();
-                }
+                renderBibleAccordion();
             }
             return;
         }
@@ -386,5 +379,4 @@ function initBibleListeners() {
             }
         }, 300);
     });
-
 }

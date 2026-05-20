@@ -196,15 +196,6 @@
 
                     <div class="song-list" id="bibleContentList"></div>
 
-                    <div class="bible-passage-bar hidden" id="biblePassageBar">
-                        <span id="biblePassageRef"></span>
-                        <div class="bible-passage-actions">
-                            <button type="button" class="btn btn-small btn-secondary"
-                                    id="biblePassageClear">Clear</button>
-                            <button type="button" class="btn btn-small btn-primary"
-                                    id="biblePassageProject">Project</button>
-                        </div>
-                    </div>
                 </div>
             </aside>
 
@@ -278,6 +269,23 @@
                     </div>
 
                     <div class="lyrics-grid" id="lyricsScroll"></div>
+                </div>
+
+                <div class="bible-display" id="bibleDisplay" hidden>
+                    <div class="song-top-row">
+                        <div class="song-meta">
+                            <h1 class="song-title" id="bibleDisplayTitle"></h1>
+                            <p class="song-author" id="bibleDisplaySubtitle">King James Version</p>
+                        </div>
+                        <div class="preview-container">
+                            <div class="preview-label">Preview</div>
+                            <div class="preview-window">
+                                <iframe class="preview-frame" id="biblePreviewFrame"
+                                        src="projector.html" title="Projector preview"></iframe>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="lyrics-grid" id="bibleVerseGrid"></div>
                 </div>
             </section>
         </main>

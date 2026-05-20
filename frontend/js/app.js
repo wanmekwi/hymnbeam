@@ -79,6 +79,11 @@ const elements = {
     emptyState: document.getElementById('emptyState'),
     contentPlaceholder: document.getElementById('contentPlaceholder'),
     songDisplay: document.getElementById('songDisplay'),
+    bibleDisplay: document.getElementById('bibleDisplay'),
+    bibleVerseGrid: document.getElementById('bibleVerseGrid'),
+    bibleDisplayTitle: document.getElementById('bibleDisplayTitle'),
+    bibleDisplaySubtitle: document.getElementById('bibleDisplaySubtitle'),
+    biblePreviewFrame: document.getElementById('biblePreviewFrame'),
     displayTitle: document.getElementById('displayTitle'),
     displayAuthor: document.getElementById('displayAuthor'),
     lyricsScroll: document.getElementById('lyricsScroll'),
@@ -391,15 +396,19 @@ function renderSongList() {
 }
 
 
+function setContentView(view) {
+    elements.contentPlaceholder.hidden = view !== 'placeholder';
+    elements.songDisplay.hidden = view !== 'song';
+    elements.bibleDisplay.hidden = view !== 'bible';
+}
+
 function renderSongDisplay() {
     if (!state.currentSong) {
-        elements.contentPlaceholder.hidden = false;
-        elements.songDisplay.hidden = true;
+        setContentView('placeholder');
         return;
     }
 
-    elements.contentPlaceholder.hidden = true;
-    elements.songDisplay.hidden = false;
+    setContentView('song');
 
     const num = state.currentSong.song_number;
     elements.displayTitle.textContent = num
