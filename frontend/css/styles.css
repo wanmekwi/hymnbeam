@@ -10,7 +10,7 @@
     
     --accent: #d4a855;
     --accent-glow: rgba(212, 168, 85, 0.15);
-    --accent-hover: #e5be6a;
+--accent-hover: #e5be6a;
     
     --border: rgba(255, 255, 255, 0.06);
     --border-focus: rgba(212, 168, 85, 0.4);
@@ -1829,12 +1829,12 @@ input.toggle:checked::before {
     user-select: none;
 }
 
-.bible-verse-item:hover,
-.bible-verse-item.active-verse {
+.bible-verse-item:hover {
     background: var(--bg-tertiary);
 }
 
 .bible-verse-item.active-verse {
+    background: var(--bg-tertiary);
     border-left: 3px solid var(--accent);
     padding-left: 11px;
 }
@@ -1850,6 +1850,11 @@ input.toggle:checked::before {
 
 .bible-verse-text {
     flex: 1;
+}
+
+.bible-verse-text em,
+.bible-search-text em {
+    font-style: italic;
 }
 
 .bible-search-hit {
@@ -1878,20 +1883,3 @@ input.toggle:checked::before {
     line-height: 1.4;
 }
 
-.bible-passage-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-muted);
-}
-
-.bible-passage-actions {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-}

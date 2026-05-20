@@ -27,7 +27,6 @@ const bibleState = {
     searchResults: [],
     searchQuery: '',
     activeVerse: null,
-    passage: [],
 };
 
 async function fetchBibleBooks() {
@@ -48,7 +47,24 @@ async function fetchBibleSearch(q) {
     return res.json();
 }
 
-function openBibleTab() {
+function buildBibleVersesArray() {
+    return bibleState.verses.map(v => v.text);
+}
+
+function sendBiblePayload(payload) {
+    const frame = document.getElementById('previewFrame');
+    if (frame && frame.contentWindow) {
+        frame.contentWindow.postMessage({ type: 'update-lyrics', ...payload }, '*');
+    }
+    if (state.projectorOpen && window.__TAURI__) {
+        window.__TAURI__.core.invoke('send_to_projector', {
+            event: 'update-lyrics',
+            payload: JSON.stringify(payload),
+        }).catch(e => console.error('bible project error:', e));
+    }
+}
+
+async function openBibleTab() {
     document.getElementById('libraryPanel').classList.add('hidden');
     document.getElementById('collectionsPanel').classList.add('hidden');
     document.getElementById('biblePanel').classList.remove('hidden');
@@ -56,7 +72,12 @@ function openBibleTab() {
     document.getElementById('collectionsTabBtn').classList.remove('active');
     document.getElementById('bibleTabBtn').classList.add('active');
     if (bibleState.books.length === 0) {
-        fetchBibleBooks().then(renderBibleBooks).catch(e => console.error(e));
+        try {
+            await fetchBibleBooks();
+            renderBibleBooks();
+        } catch (e) {
+            console.error(e);
+        }
     } else {
         renderCurrentBibleView();
     }
@@ -134,6 +155,7 @@ async function openBibleBook(code) {
 
 async function openBibleChapter(chapter) {
     if (!bibleState.openBook) return;
+    bibleState.activeVerse = null;
     bibleState.openChapter = chapter;
     try {
         bibleState.verses = await fetchBibleChapter(bibleState.openBook.code, chapter);
@@ -143,6 +165,25 @@ async function openBibleChapter(chapter) {
     }
     bibleState.view = 'verses';
     renderBibleVerses();
+}
+
+// Convert [word] italic markers to <em>word</em> HTML.
+// Escapes all non-bracket content so it is safe to inject via innerHTML.
+function bibleTextToHtml(text) {
+    // Split on [word] markers, escape surrounding text, wrap markers in <em>
+    return text.split(/(\[[^\]]+\])/).map((part, i) => {
+        if (i % 2 === 1) {
+            // Italic segment: strip the brackets, escape, wrap in <em>
+            const inner = escapeHtml(part.slice(1, -1));
+            return `<em>${inner}</em>`;
+        }
+        return escapeHtml(part);
+    }).join('');
+}
+
+// Strip [word] markers to get plain text (used for measurement and FTS display).
+function bibleTextPlain(text) {
+    return text.replace(/\[([^\]]+)\]/g, '$1');
 }
 
 function renderBibleVerses() {
@@ -157,7 +198,7 @@ function renderBibleVerses() {
         <div class="bible-verse-item ${bibleState.activeVerse === v.verse ? 'active-verse' : ''}"
              data-verse="${v.verse}">
             <span class="bible-verse-num">${v.verse}</span>
-            <span class="bible-verse-text">${escapeHtml(v.text)}</span>
+            <span class="bible-verse-text">${bibleTextToHtml(v.text)}</span>
         </div>
     `).join('');
 }
@@ -174,7 +215,7 @@ function renderBibleSearch() {
         <div class="bible-search-hit"
              data-book="${escapeHtml(h.book)}" data-chapter="${h.chapter}" data-verse="${h.verse}">
             <span class="bible-search-ref">${escapeHtml(h.reference)}</span>
-            <span class="bible-search-text">${escapeHtml(h.text)}</span>
+            <span class="bible-search-text">${bibleTextToHtml(h.text)}</span>
         </div>
     `).join('');
 }
@@ -182,9 +223,7 @@ function renderBibleSearch() {
 function projectBibleVerse(book, bookName, chapter, verse, text) {
     bibleState.activeVerse = verse;
 
-    // Each verse gets a unique songId so the projector recomputes font size
-    // for every verse individually, filling the available space.
-    const songId = `bible-${book}-${chapter}-${verse}`;
+    const songId = `bible-${book}-${chapter}`;
     const title = `${bookName} ${chapter}:${verse}`;
 
     const payload = {
@@ -197,60 +236,16 @@ function projectBibleVerse(book, bookName, chapter, verse, text) {
         musical_key: null,
         songId,
         songNumber: null,
-        verses: [text],   // size to THIS verse only, not the whole chapter
+        verses: buildBibleVersesArray(),
         hasPrev: false,
         hasNext: false,
     };
 
-    const frame = document.getElementById('previewFrame');
-    if (frame && frame.contentWindow) {
-        frame.contentWindow.postMessage({ type: 'update-lyrics', ...payload }, '*');
-    }
-
-    if (state.projectorOpen && window.__TAURI__) {
-        window.__TAURI__.core.invoke('send_to_projector', {
-            event: 'update-lyrics',
-            payload: JSON.stringify(payload),
-        }).catch(e => console.error('bible project error:', e));
-    }
+    sendBiblePayload(payload);
 
     if (bibleState.view === 'verses') renderBibleVerses();
 }
 
-function addVerseToPassage(verse, text) {
-    const already = bibleState.passage.findIndex(v => v.verse === verse);
-    if (already !== -1) {
-        bibleState.passage.splice(already, 1);
-    } else {
-        bibleState.passage.push({ verse, text });
-        bibleState.passage.sort((a, b) => a.verse - b.verse);
-    }
-    updatePassageBar();
-}
-
-function updatePassageBar() {
-    const bar = document.getElementById('biblePassageBar');
-    const ref = document.getElementById('biblePassageRef');
-    if (bibleState.passage.length === 0) {
-        bar.classList.add('hidden');
-        return;
-    }
-    bar.classList.remove('hidden');
-    const vs = bibleState.passage.map(v => v.verse);
-    const rangeStr = vs[0] === vs[vs.length - 1] ? `v.${vs[0]}` : `vv.${vs[0]}–${vs[vs.length - 1]}`;
-    const book = bibleState.openBook;
-    const abbr = book ? (BOOK_ABBR[book.code] || book.name) : '';
-    ref.textContent = `${abbr} ${bibleState.openChapter}:${rangeStr}`;
-}
-
-function projectPassage() {
-    if (!bibleState.passage.length) return;
-    const combinedText = bibleState.passage.map(v => `${v.verse}  ${v.text}`).join('\n');
-    const book = bibleState.openBook;
-    const ch = bibleState.openChapter;
-    const v0 = bibleState.passage[0].verse;
-    projectBibleVerse(book.code, book.name, ch, v0, combinedText);
-}
 
 // Parse a typed reference like "John 3:16", "1 Cor 13:4", "Ps 23:1".
 // Returns {book, chapter, verse} or null if the query isn't a reference.
@@ -336,17 +331,13 @@ function initBibleListeners() {
             const v = parseInt(verseItem.dataset.verse, 10);
             const row = bibleState.verses.find(r => r.verse === v);
             if (!row) return;
-            if (e.shiftKey) {
-                addVerseToPassage(v, row.text);
-            } else {
-                projectBibleVerse(
-                    bibleState.openBook.code,
-                    bibleState.openBook.name,
-                    bibleState.openChapter,
-                    v,
-                    row.text
-                );
-            }
+            projectBibleVerse(
+                bibleState.openBook.code,
+                bibleState.openBook.name,
+                bibleState.openChapter,
+                v,
+                row.text
+            );
             return;
         }
         if (searchHit) {
@@ -396,9 +387,4 @@ function initBibleListeners() {
         }, 300);
     });
 
-    document.getElementById('biblePassageClear').addEventListener('click', () => {
-        bibleState.passage = [];
-        updatePassageBar();
-    });
-    document.getElementById('biblePassageProject').addEventListener('click', projectPassage);
 }

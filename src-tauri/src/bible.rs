@@ -29,8 +29,27 @@ pub struct SearchHit {
 
 pub fn ensure_bible_loaded(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM bible_verses", [], |r| r.get(0))?;
+
     if count > 0 {
-        return Ok(());
+        // Detect old data: missing words (double spaces) OR no italic markers at all.
+        // The new dataset has [word] markers and complete text — repopulate if stale.
+        let old_data: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bible_verses WHERE text LIKE '%  %' OR text NOT LIKE '%[%')",
+            [],
+            |r| r.get(0),
+        )?;
+        // Only skip if data looks like the new format (has [brackets] somewhere)
+        let has_new_format: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bible_verses WHERE text LIKE '%[%]%')",
+            [],
+            |r| r.get(0),
+        )?;
+        if has_new_format && !old_data {
+            return Ok(());
+        }
+        // Clear stale data so we can reload with the corrected dataset.
+        conn.execute("DELETE FROM bible_verses", [])?;
+        println!("Bible data stale — reloading with corrected text");
     }
 
     #[derive(serde::Deserialize)]
@@ -136,6 +155,7 @@ fn build_fts_query(raw: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
 
 pub fn search_bible(query: &str, limit: u32) -> rusqlite::Result<Vec<SearchHit>> {
     let fts_query = build_fts_query(query);

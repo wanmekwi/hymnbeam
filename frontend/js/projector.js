@@ -127,6 +127,20 @@ measureEl.style.cssText = 'position:absolute;visibility:hidden;left:-99999px;top
 document.body.appendChild(measureEl);
 
 
+// Convert [word] italic markers to <em>word</em>. Input must already be escaped
+// or be plain text — we escape non-bracket segments ourselves.
+function bibleTextToHtml(text) {
+    const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return text.split(/(\[[^\]]+\])/).map((part, i) =>
+        i % 2 === 1 ? `<em>${esc(part.slice(1,-1))}</em>` : esc(part)
+    ).join('');
+}
+
+// Strip [word] brackets to get plain text (used for font-size measurement).
+function bibleTextPlain(text) {
+    return text.replace(/\[([^\]]+)\]/g, '$1');
+}
+
 function updateDisplay(data) {
     const { text, label, isBlank, title, author, musical_key, songId, songNumber, verses,
             hasPrev, hasNext, isBible } = data;
@@ -162,7 +176,11 @@ function updateDisplay(data) {
             elements.songTitleBar.textContent = title || '';
             elements.songTitleBar.classList.toggle('visible', !!title);
         }
-        currentVerses = verses && verses.length ? verses : (text ? [text] : []);
+        // For font-size measurement use plain text (strip italic markers).
+        const plainVerses = isBible
+            ? (verses && verses.length ? verses.map(bibleTextPlain) : (text ? [bibleTextPlain(text)] : []))
+            : (verses && verses.length ? verses : (text ? [text] : []));
+        currentVerses = plainVerses;
         songFontSize = computeSongFontSize(currentVerses);
     }
 
@@ -179,7 +197,11 @@ function updateDisplay(data) {
 
     setTimeout(() => {
         currentText = text;
-        elements.lyricsText.textContent = text;
+        if (isBible) {
+            elements.lyricsText.innerHTML = bibleTextToHtml(text);
+        } else {
+            elements.lyricsText.textContent = text;
+        }
         applySongFontSize();
         elements.lyricsContainer.classList.remove('transitioning');
         if (trans.style !== 'cut' && trans.style !== 'fade') {

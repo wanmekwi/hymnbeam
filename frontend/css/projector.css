@@ -54,6 +54,11 @@ body {
     line-height: 1.4;
 }
 
+.projector.bible-mode .lyrics-text em {
+    font-style: italic;
+    font-weight: inherit;
+}
+
 .song-title-bar {
     position: absolute;
     top: 16px;
