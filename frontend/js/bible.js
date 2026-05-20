@@ -15,6 +15,129 @@ const BOOK_ABBR = {
     '65N':'Jud','66N':'Rev',
 };
 
+const BOOK_ALIASES = {
+    '01O': ['gen','ge','gn'],
+    '02O': ['exo','ex','exod'],
+    '03O': ['lev','le','lv'],
+    '04O': ['num','nu','nm','nb'],
+    '05O': ['deut','dt','de'],
+    '06O': ['josh','jos','jsh'],
+    '07O': ['judg','jdg','jg','jdgs'],
+    '08O': ['ru','rth'],
+    '09O': ['1sam','1sa','1s','1samuel'],
+    '10O': ['2sam','2sa','2s','2samuel'],
+    '11O': ['1kgs','1ki','1k','1kings'],
+    '12O': ['2kgs','2ki','2k','2kings'],
+    '13O': ['1chr','1ch','1chron','1chronicles'],
+    '14O': ['2chr','2ch','2chron','2chronicles'],
+    '15O': ['ezr','ezra'],
+    '16O': ['neh','ne'],
+    '17O': ['est','es','esth'],
+    '18O': ['job','jb'],
+    '19O': ['ps','psa','psm','psalm','pss'],
+    '20O': ['prov','pr','prv','pro'],
+    '21O': ['ec','ecc','eccl','eccles','qoh'],
+    '22O': ['song','songs','sos','sng','ss','cant','canticles',
+            'songofsolomon','songofsongs'],
+    '23O': ['isa','is','isai'],
+    '24O': ['jer','je','jr'],
+    '25O': ['lam','la'],
+    '26O': ['ezek','eze','ezk'],
+    '27O': ['dan','da','dn'],
+    '28O': ['hos','ho'],
+    '29O': ['joel','joe','jl'],
+    '30O': ['amos','am','amo'],
+    '31O': ['obad','ob','oba'],
+    '32O': ['jonah','jon','jnh'],
+    '33O': ['mic','mi','mc'],
+    '34O': ['nah','na'],
+    '35O': ['hab','hb'],
+    '36O': ['zeph','zep','zp'],
+    '37O': ['hag','hg'],
+    '38O': ['zech','zec','zc'],
+    '39O': ['mal','ml'],
+    '40N': ['mt','matt','mat'],
+    '41N': ['mk','mar','mrk','mr'],
+    '42N': ['lk','luk','lu'],
+    '43N': ['jn','joh','jhn'],
+    '44N': ['ac','act'],
+    '45N': ['rom','ro','rm'],
+    '46N': ['1cor','1co','1c','1corinthians'],
+    '47N': ['2cor','2co','2c','2corinthians'],
+    '48N': ['gal','ga'],
+    '49N': ['eph','ep'],
+    '50N': ['phil','php','pp','philippians'],
+    '51N': ['col','co'],
+    '52N': ['1thess','1th','1thes','1thessalonians'],
+    '53N': ['2thess','2th','2thes','2thessalonians'],
+    '54N': ['1tim','1ti','1tm','1timothy'],
+    '55N': ['2tim','2ti','2tm','2timothy'],
+    '56N': ['tit','ti','tt'],
+    '57N': ['philem','phm','phlm','pm','philemon'],
+    '58N': ['heb','he'],
+    '59N': ['jas','jm','jam'],
+    '60N': ['1pet','1pe','1p','1peter'],
+    '61N': ['2pet','2pe','2p','2peter'],
+    '62N': ['1jn','1jo','1joh','1j','1john'],
+    '63N': ['2jn','2jo','2joh','2j','2john'],
+    '64N': ['3jn','3jo','3joh','3j','3john'],
+    '65N': ['jude','jud','jd'],
+    '66N': ['rev','re','rv','apoc','apocalypse'],
+};
+
+// <book…>  <chapter>  [ : . space ]  [<verse>]
+const REF_RE = /^(.+?)\s*(\d{1,3})(?:\s*[:.\s]\s*(\d{1,3}))?$/;
+
+let _bookIndex = null;
+
+function normRef(s) {
+    return s.toLowerCase()
+        .replace(/\./g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function compact(s) {
+    return normRef(s).replace(/\s/g, '');
+}
+
+function deromanize(token) {
+    return token.replace(/^(i{1,3})\b/i, (m) => String(m.length));
+}
+
+function buildBookIndex() {
+    _bookIndex = new Map();
+    const add = (key, book) => {
+        const k = compact(key);
+        if (k && !_bookIndex.has(k)) _bookIndex.set(k, book);
+    };
+    for (const b of bibleState.books) {
+        add(b.name, b);
+        add(BOOK_ABBR[b.code] || '', b);
+        for (const a of (BOOK_ALIASES[b.code] || [])) add(a, b);
+    }
+}
+
+function resolveBook(rawToken) {
+    if (!_bookIndex) buildBookIndex();
+    const token = compact(deromanize(normRef(rawToken)));
+    if (!token) return null;
+
+    if (_bookIndex.has(token)) return _bookIndex.get(token);
+
+    const prefixHits = bibleState.books.filter(b =>
+        compact(b.name).startsWith(token));
+    if (prefixHits.length === 1) return prefixHits[0];
+
+    const aliasHits = [...new Set(
+        [..._bookIndex.entries()]
+            .filter(([k]) => k.startsWith(token))
+            .map(([, b]) => b))];
+    if (aliasHits.length === 1) return aliasHits[0];
+
+    return null;
+}
+
 let _bibleNavStack = [];
 
 const bibleState = {
@@ -33,6 +156,7 @@ async function fetchBibleBooks() {
     const res = await fetch(`${API_URL}/bible/books`);
     if (!res.ok) throw new Error('Failed to load Bible books');
     bibleState.books = await res.json();
+    _bookIndex = null;
 }
 
 async function fetchBibleChapter(bookCode, chapter) {
@@ -254,45 +378,33 @@ function projectBibleVerse(book, bookName, chapter, verse, text) {
 }
 
 function parseReference(query) {
-    const m = query.trim().match(/^(\d?\s*[a-zA-Z][\w ]*?)\s+(\d+):(\d+)\s*$/);
+    const m = normRef(query).match(REF_RE);
     if (!m) return null;
-    const chapter = parseInt(m[2], 10);
-    const verse   = parseInt(m[3], 10);
-    if (!chapter || !verse) return null;
-    const book = findBookByQuery(m[1].trim());
+    const book = resolveBook(m[1]);
     if (!book) return null;
+    const chapter = parseInt(m[2], 10);
+    if (!chapter || chapter > book.chapters) return null;
+    const verse = m[3] ? parseInt(m[3], 10) : null;
     return { book, chapter, verse };
 }
 
-function findBookByQuery(q) {
-    if (!bibleState.books.length) return null;
-    const norm = q.toLowerCase().replace(/[\s.]/g, '');
-    for (const b of bibleState.books) {
-        if ((BOOK_ABBR[b.code] || '').toLowerCase() === norm) return b;
-    }
-    for (const b of bibleState.books) {
-        if (b.name.toLowerCase().replace(/[\s.]/g, '') === norm) return b;
-    }
-    if (norm.length >= 2) {
-        for (const b of bibleState.books) {
-            if (b.name.toLowerCase().replace(/[\s.]/g, '').startsWith(norm)) return b;
-        }
-    }
-    return null;
+async function loadBibleChapterReference({ book, chapter }) {
+    if (!bibleState.books.length) await fetchBibleBooks();
+    bibleState.expandedBook = book.code;
+    bibleState.openBook = book;
+    bibleState.activeVerse = null;
+    bibleState.openChapter = chapter;
+    bibleState.verses = await fetchBibleChapter(book.code, chapter);
+    renderBibleAccordion();
+    renderBibleVerseGrid();
+    setContentView('bible');
 }
 
 async function lookupAndProjectReference({ book, chapter, verse }) {
     try {
-        if (!bibleState.books.length) await fetchBibleBooks();
-        bibleState.expandedBook = book.code;
-        bibleState.openBook = book;
-        bibleState.openChapter = chapter;
-        bibleState.verses = await fetchBibleChapter(book.code, chapter);
+        await loadBibleChapterReference({ book, chapter });
         const row = bibleState.verses.find(r => r.verse === verse);
         if (!row) return;
-        renderBibleAccordion();
-        renderBibleVerseGrid();
-        setContentView('bible');
         projectBibleVerse(book.code, book.name, chapter, verse, row.text);
     } catch (e) {
         console.error('Reference lookup failed', e);
@@ -367,7 +479,17 @@ function initBibleListeners() {
         }
         const ref = parseReference(q);
         if (ref) {
-            searchTimer = setTimeout(() => lookupAndProjectReference(ref), 300);
+            searchTimer = setTimeout(async () => {
+                try {
+                    if (ref.verse != null) {
+                        await lookupAndProjectReference(ref);
+                    } else {
+                        await loadBibleChapterReference(ref);
+                    }
+                } catch (err) {
+                    console.error('Reference lookup failed', err);
+                }
+            }, 300);
             return;
         }
         searchTimer = setTimeout(async () => {
