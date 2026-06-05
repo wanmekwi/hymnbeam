@@ -43,8 +43,6 @@ The `.dmg` is a universal binary — it runs natively on both Apple Silicon and 
 |---|---|
 | ![Operator panel](docs/operator.png) | ![Projector view](docs/projector.png) |
 
-> Drop `docs/operator.png` and `docs/projector.png` with real screenshots to populate this table.
-
 ---
 
 ## Features
