@@ -6,6 +6,8 @@
   [![Latest Release](https://img.shields.io/github/v/release/wanmekwi/hymnbeam?label=download&color=4f6ef7)](https://github.com/wanmekwi/hymnbeam/releases/latest)
   [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
   [![Platform: macOS](https://img.shields.io/badge/platform-macOS%2010.15%2B-lightgrey)]()
+
+  **[hymnbeam.mekwi.net](https://hymnbeam.mekwi.net)**
 </div>
 
 ---
