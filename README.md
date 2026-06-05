@@ -23,17 +23,17 @@ The Homebrew cask strips the Gatekeeper quarantine flag automatically — no ext
 
 ### Direct download
 
-1. Download **HymnBeam\_0.1.3\_universal.dmg** from the [latest release](https://github.com/wanmekwi/hymnbeam/releases/latest).
+1. Go to the [latest release](https://github.com/wanmekwi/hymnbeam/releases/latest) and download **HymnBeam\_x.x.x\_universal.dmg**.
 2. Open the DMG and drag **HymnBeam** to `/Applications`.
-3. Clear the one-time Gatekeeper quarantine flag:
+3. Eject the DMG.
+4. **First launch only** — macOS will block the app because it is not notarized. Choose one of:
+   - Right-click **HymnBeam.app** → **Open** → confirm in the dialog, **or**
+   - Run this once in Terminal to clear the quarantine flag:
+     ```bash
+     xattr -dr com.apple.quarantine "/Applications/HymnBeam.app"
+     ```
 
-   ```bash
-   xattr -dr com.apple.quarantine "/Applications/HymnBeam.app"
-   ```
-
-   Or right-click the app → **Open** the first time and confirm.
-
-The `.dmg` is a universal binary — it runs natively on both Apple Silicon and Intel Macs.
+The DMG is a **universal binary** — runs natively on Apple Silicon and Intel Macs.
 
 ---
 
