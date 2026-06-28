@@ -109,6 +109,12 @@ fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
     .build()
     .map_err(|e| e.to_string())?;
 
+    // Re-assert the position/size on the target display before fullscreen. The
+    // builder's position can be applied asynchronously by the macOS window
+    // server, so without this native fullscreen may capture the operator's
+    // screen instead of the target one.
+    let _ = projector.set_position(tauri::PhysicalPosition::new(position.x, position.y));
+    let _ = projector.set_size(tauri::PhysicalSize::new(size.width, size.height));
     // Move to the target display first, then enter fullscreen on that screen.
     let _ = projector.set_fullscreen(true);
 
