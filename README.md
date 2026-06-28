@@ -18,10 +18,13 @@
 
 ```bash
 brew tap wanmekwi/hymnbeam
+brew trust --cask wanmekwi/hymnbeam/hymnbeam
 brew install --cask hymnbeam
 ```
 
-The Homebrew cask strips the Gatekeeper quarantine flag automatically — no extra steps needed.
+Recent versions of Homebrew refuse to install casks from third-party taps until
+you explicitly trust them, hence the `brew trust` step. The Homebrew cask then
+strips the Gatekeeper quarantine flag automatically — no extra steps needed.
 
 ### Direct download
 
