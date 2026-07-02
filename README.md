@@ -1,11 +1,11 @@
 <div align="center">
   <img src="Hymn.png" width="140" alt="HymnBeam">
   <h1>HymnBeam</h1>
-  <p>Church song-lyrics projector for macOS — dual-window operator/projector layout, KJV Bible integration, and a portable song library.</p>
+  <p>Church song-lyrics projector for macOS and Windows — dual-window operator/projector layout, KJV Bible integration, and a portable song library.</p>
 
   [![Latest Release](https://img.shields.io/github/v/release/wanmekwi/hymnbeam?label=download&color=4f6ef7)](https://github.com/wanmekwi/hymnbeam/releases/latest)
   [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-  [![Platform: macOS](https://img.shields.io/badge/platform-macOS%2010.15%2B-lightgrey)]()
+  [![Platform: macOS | Windows](https://img.shields.io/badge/platform-macOS%2010.15%2B%20%7C%20Windows%2010%2B-lightgrey)]()
 
   **[hymnbeam.mekwi.net](https://hymnbeam.mekwi.net)**
 </div>
@@ -14,7 +14,7 @@
 
 ## Install
 
-### Homebrew (recommended)
+### macOS — Homebrew (recommended)
 
 ```bash
 brew tap wanmekwi/hymnbeam
@@ -26,7 +26,7 @@ Recent versions of Homebrew refuse to install casks from third-party taps until
 you explicitly trust them, hence the `brew trust` step. The Homebrew cask then
 strips the Gatekeeper quarantine flag automatically — no extra steps needed.
 
-### Direct download
+### macOS — Direct download
 
 1. Go to the [latest release](https://github.com/wanmekwi/hymnbeam/releases/latest) and download **HymnBeam\_x.x.x\_universal.dmg**.
 2. Open the DMG and drag **HymnBeam** to `/Applications`.
@@ -39,6 +39,13 @@ strips the Gatekeeper quarantine flag automatically — no extra steps needed.
      ```
 
 The DMG is a **universal binary** — runs natively on Apple Silicon and Intel Macs.
+
+### Windows
+
+Windows installers ship with releases from **v0.1.5** onwards.
+
+1. Go to the [latest release](https://github.com/wanmekwi/hymnbeam/releases/latest) and download **HymnBeam\_x.x.x\_x64-setup.exe**.
+2. Run the installer. Because the app is not code-signed, Microsoft Defender SmartScreen will warn on first run — click **More info** → **Run anyway**.
 
 ---
 
@@ -175,7 +182,9 @@ hymnbeam/
 
 ---
 
-## Building for Distribution (macOS)
+## Building for Distribution
+
+### macOS
 
 Build a universal (Apple Silicon + Intel) `.app` and `.dmg`, ad-hoc signed:
 
@@ -186,6 +195,10 @@ Build a universal (Apple Silicon + Intel) `.app` and `.dmg`, ad-hoc signed:
 Output lands in `src-tauri/target/universal-apple-darwin/release/bundle/`.
 
 For a single-arch local build: `cargo tauri build` from inside `src-tauri/`.
+
+### Windows
+
+On a Windows machine: `cargo tauri build --bundles nsis` produces the installer under `src-tauri\target\release\bundle\nsis\`. Releases are built automatically by the [Release workflow](.github/workflows/release.yml) on GitHub Actions — pushing a `v*` tag attaches both the macOS DMG and the Windows installer to the release.
 
 ### Notarization (optional upgrade)
 
