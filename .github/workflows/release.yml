@@ -42,6 +42,12 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
+      # The cargo target dir is cached, so bundles from previous runs (older
+      # versions) may be restored with it. Clear them so the upload globs
+      # below only ever match this build's output.
+      - name: Remove stale bundle output
+        run: rm -rf src-tauri/target/universal-apple-darwin/release/bundle
+
       - name: Build universal DMG
         run: ./build-macos.sh
 
@@ -86,6 +92,11 @@ jobs:
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
+
+      # See the matching step in build-macos: drop bundles restored from the
+      # cargo cache so the upload globs only match this build's installer.
+      - name: Remove stale bundle output
+        run: Remove-Item -Recurse -Force -ErrorAction Ignore src-tauri/target/release/bundle
 
       - name: Build NSIS installer
         run: cargo tauri build --bundles nsis
