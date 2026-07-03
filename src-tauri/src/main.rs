@@ -24,6 +24,35 @@ fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+#[derive(serde::Serialize)]
+struct ImportResult {
+    imported: usize,
+    song_ids: Vec<i64>,
+}
+
+// File uploads go over IPC instead of the axum custom protocol: on Windows,
+// WebView2 never delivers File/Blob-backed fetch bodies to intercepted
+// protocol handlers, so the multipart /import and /backgrounds endpoints
+// receive empty bodies there. Those endpoints remain for the non-Tauri
+// browser dev fallback.
+#[tauri::command]
+fn import_songs_from_content(filename: String, content: String) -> Result<ImportResult, String> {
+    let song_ids = import::import_file(&content, &filename)?;
+    Ok(ImportResult {
+        imported: song_ids.len(),
+        song_ids,
+    })
+}
+
+#[tauri::command]
+fn save_background_image(filename: String, data_base64: String) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("invalid image data: {}", e))?;
+    backgrounds::save_image(&filename, &bytes)
+}
+
 fn monitors_match(a: &tauri::Monitor, b: &tauri::Monitor) -> bool {
     if let (Some(na), Some(nb)) = (a.name(), b.name()) {
         if na == nb {
@@ -166,7 +195,9 @@ fn main() {
             get_app_version,
             open_projector_window,
             close_projector_window,
-            send_to_projector
+            send_to_projector,
+            import_songs_from_content,
+            save_background_image
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

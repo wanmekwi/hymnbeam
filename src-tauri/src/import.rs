@@ -375,6 +375,10 @@ pub fn import_text(content: &str) -> Result<i64, String> {
 }
 
 pub fn import_file(content: &str, filename: &str) -> Result<Vec<i64>, String> {
+    // Windows editors often prepend a UTF-8 BOM, which serde_json and the
+    // CSV header lookup both choke on.
+    let content = content.trim_start_matches('\u{feff}');
+
     let ext = Path::new(filename)
         .extension()
         .and_then(|e| e.to_str())
@@ -386,5 +390,38 @@ pub fn import_file(content: &str, filename: &str) -> Result<Vec<i64>, String> {
         "csv" => import_csv(content),
         "txt" | "text" => import_text(content).map(|id| vec![id]),
         _ => Err(format!("Unsupported file type: {}", ext)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+
+    fn setup_temp_db() {
+        let path = std::env::temp_dir().join(format!(
+            "hymnbeam-test-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        db::set_db_path(path);
+        db::init_db().expect("init test db");
+    }
+
+    #[test]
+    fn imports_json_with_utf8_bom() {
+        setup_temp_db();
+
+        let json = "\u{feff}[{\"title\": \"Amazing Grace\", \"lyrics\": \"Amazing grace how sweet the sound\\n\\nThat saved a wretch like me\"}]";
+        let ids = import_file(json, "songs.json").expect("BOM-prefixed JSON should import");
+        assert_eq!(ids.len(), 1);
+
+        // Windows line endings in a plain JSON import.
+        let json_crlf = "{\"title\": \"It Is Well\", \"lyrics\": \"When peace like a river\\r\\n\\r\\nAttendeth my way\"}";
+        let ids = import_file(json_crlf, "song.json").expect("CRLF JSON should import");
+        assert_eq!(ids.len(), 1);
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "hymnbeam"
-version = "0.1.5"
+version = "0.1.6"
 description = "Church song lyrics projector"
 authors = ["HymnBeam"]
 license = "MIT"
@@ -25,6 +25,7 @@ tauri-plugin-axum = "0.9"
 rusqlite = { version = "0.34", features = ["bundled"] }
 
 # Utilities
+base64 = "0.22"
 dirs = "6"
 regex = "1"
 csv = "1"

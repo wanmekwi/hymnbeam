@@ -663,28 +663,41 @@ async function importFiles(files) {
     elements.dropZone.style.pointerEvents = 'none';
     elements.fileInput.disabled = true;
 
-    const formData = new FormData();
     let importedCount = 0;
     let lastError = '';
 
     try {
         for (const file of files) {
-            formData.set('file', file);
             try {
-                const response = await fetch(`${API_URL}/import`, {
-                    method: 'POST',
-                    body: formData
-                });
-                if (response.ok) {
-                    const result = await response.json();
+                if (window.__TAURI__) {
+                    // File contents go over IPC: on Windows, WebView2 never
+                    // delivers File-backed fetch bodies to the axum custom
+                    // protocol, so multipart POSTs arrive empty there.
+                    const result = await window.__TAURI__.core.invoke('import_songs_from_content', {
+                        filename: file.name,
+                        content: await file.text(),
+                    });
                     importedCount += result.imported;
                 } else {
-                    const detail = await response.text().catch(() => '');
-                    lastError = detail || `Import failed (${response.status})`;
-                    console.error(`Import failed for ${file.name}:`, response.status, detail);
+                    const formData = new FormData();
+                    formData.set('file', file);
+                    const response = await fetch(`${API_URL}/import`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    if (response.ok) {
+                        const result = await response.json();
+                        importedCount += result.imported;
+                    } else {
+                        const detail = await response.text().catch(() => '');
+                        lastError = detail || `Import failed (${response.status})`;
+                        console.error(`Import failed for ${file.name}:`, response.status, detail);
+                    }
                 }
             } catch (error) {
-                lastError = 'Could not reach the server — try restarting the app';
+                lastError = typeof error === 'string'
+                    ? error
+                    : 'Could not reach the server — try restarting the app';
                 console.error(`Error importing ${file.name}:`, error);
             }
         }
@@ -1509,7 +1522,24 @@ function syncBgImageThumb() {
     }
 }
 
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',', 2)[1] || '');
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
+}
+
 async function uploadBackgroundImage(file) {
+    if (window.__TAURI__) {
+        // Same Windows WebView2 limitation as importFiles: send bytes over
+        // IPC rather than a multipart POST to the custom protocol.
+        return await window.__TAURI__.core.invoke('save_background_image', {
+            filename: file.name,
+            dataBase64: await fileToBase64(file),
+        });
+    }
     const form = new FormData();
     form.append('image', file, file.name);
     const res = await fetch(`${API_URL}/backgrounds`, { method: 'POST', body: form });
