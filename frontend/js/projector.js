@@ -7,7 +7,9 @@ const elements = {
     songMetaBar: document.getElementById('songMetaBar'),
     verseNavUp: document.getElementById('verseNavUp'),
     verseNavDown: document.getElementById('verseNavDown'),
-    metaColKey: document.getElementById('metaColKey'),
+    titleColNumber: document.getElementById('titleColNumber'),
+    titleColTitle: document.getElementById('titleColTitle'),
+    titleColKey: document.getElementById('titleColKey'),
     metaColAuthor: document.getElementById('metaColAuthor'),
     projector: document.querySelector('.projector')
 };
@@ -173,8 +175,8 @@ function updateDisplay(data) {
         if (!isBible) {
             updateSongMeta(title, author, musical_key, songNumber || songId);
         } else {
-            elements.songTitleBar.textContent = title || '';
-            elements.songTitleBar.classList.toggle('visible', !!title);
+            // Bible mode: just the reference, centred — no number or key.
+            setTitleBar('', title, '');
         }
         // For font-size measurement use plain text (strip italic markers).
         const plainVerses = isBible
@@ -212,30 +214,37 @@ function updateDisplay(data) {
 }
 
 
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[c]));
+
+// Populate the three title-bar columns: number | title | key. Empty side
+// columns keep their grid track so the title stays centred whichever parts
+// are present.
+function setTitleBar(number, title, key) {
+    elements.titleColNumber.innerHTML = number
+        ? `<span class="title-bar-label">No.</span><span class="title-bar-value">${escapeHtml(number)}</span>`
+        : '';
+    elements.titleColTitle.textContent = title || '';
+    elements.titleColKey.innerHTML = key
+        ? `<span class="title-bar-label">Key</span><span class="title-bar-value">${escapeHtml(key)}</span>`
+        : '';
+    elements.songTitleBar.classList.toggle('visible', !!title);
+}
+
 function updateSongMeta(title, author, musical_key, songNumber) {
     const number = songNumber != null && songNumber !== '' ? String(songNumber) : '';
-    const displayTitle = title
-        ? (number ? `${title} - ${number}` : title)
-        : '';
-    elements.songTitleBar.textContent = displayTitle;
-    elements.songTitleBar.classList.toggle('visible', !!displayTitle);
+    setTitleBar(number, title, musical_key);
 
-    const escape = (s) => String(s).replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
-
-    // Only touch the key/author columns — the left column hosts the verse-nav
+    // Only touch the author column — the left column hosts the verse-nav
     // chevrons and verse label, which are managed elsewhere and must persist
     // across meta updates.
-    elements.metaColKey.innerHTML = musical_key
-        ? `<span class="meta-label">Key:</span><span class="meta-value">${escape(musical_key)}</span>`
-        : '';
     elements.metaColAuthor.innerHTML = author
-        ? `<span class="meta-value">${escape(author)}</span>`
+        ? `<span class="meta-value">${escapeHtml(author)}</span>`
         : '';
 
     // The bar always shows for a loaded song now — the left col holds the
-    // chevrons / verse label, so it has content even when key+author are blank.
+    // chevrons / verse label, so it has content even when author is blank.
     elements.songMetaBar.classList.toggle('visible', !!title);
 }
 
