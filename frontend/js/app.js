@@ -40,7 +40,7 @@ const DEFAULT_SETTINGS = {
         gradient: { from: '#000000', to: '#1a1a2e', angle: 180 },
         image: { filename: null, dim: 0.4 }
     },
-    layout: { showTitleBar: true, showMetaBar: true, showVerseLabel: false, safeAreaPct: 5 },
+    layout: { showTitleBar: true, showMetaBar: true, showVerseLabel: false, autoBreakLines: true, safeAreaPct: 5 },
     transition: { style: 'fade-up', durationMs: 400 }
 };
 
@@ -149,6 +149,7 @@ const elements = {
     setShowTitleBar: document.getElementById('setShowTitleBar'),
     setShowMetaBar: document.getElementById('setShowMetaBar'),
     setShowVerseLabel: document.getElementById('setShowVerseLabel'),
+    setAutoBreakLines: document.getElementById('setAutoBreakLines'),
     setSafeArea: document.getElementById('setSafeArea'),
     setSafeAreaValue: document.getElementById('setSafeAreaValue'),
     setTransStyle: document.getElementById('setTransStyle'),
@@ -1500,6 +1501,8 @@ function syncSettingsForm() {
     elements.setShowTitleBar.checked = s.layout.showTitleBar;
     elements.setShowMetaBar.checked = s.layout.showMetaBar;
     elements.setShowVerseLabel.checked = s.layout.showVerseLabel;
+    // Older saved settings predate the flag; missing means enabled.
+    elements.setAutoBreakLines.checked = s.layout.autoBreakLines !== false;
     elements.setSafeArea.value = s.layout.safeAreaPct;
     elements.setSafeAreaValue.textContent = `${s.layout.safeAreaPct}%`;
 
@@ -1669,6 +1672,7 @@ function initSettingsDialog() {
     wireToggle(elements.setShowTitleBar, 'showTitleBar');
     wireToggle(elements.setShowMetaBar, 'showMetaBar');
     wireToggle(elements.setShowVerseLabel, 'showVerseLabel');
+    wireToggle(elements.setAutoBreakLines, 'autoBreakLines');
     elements.setSafeArea.addEventListener('input', () => {
         const pct = parseInt(elements.setSafeArea.value, 10);
         state.settings.layout.safeAreaPct = pct;

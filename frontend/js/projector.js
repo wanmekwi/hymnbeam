@@ -14,9 +14,10 @@ const elements = {
     projector: document.querySelector('.projector')
 };
 
-let currentText = '';
+let currentText = '';          // original (unwrapped) text of the current slide
 let currentSongId = null;
-let currentVerses = [];
+let currentVerses = [];        // original verse texts, as sent by the operator
+let wrapMap = new Map();       // original verse text -> auto-broken text
 let songFontSize = null;
 let currentSettings = null;
 const apiBase = (() => {
@@ -91,16 +92,12 @@ function applySettings(settings) {
     const dur = (typeof trans.durationMs === 'number') ? trans.durationMs : 400;
     root.style.setProperty('--trans-duration', `${dur}ms`);
 
-    // Font swap or safe-area change resizes the available box, so re-fit.
+    // Font swap, safe-area or auto-break change alters the fit, so re-lay out.
     if (currentVerses.length) {
-        const recompute = () => {
-            songFontSize = computeSongFontSize(currentVerses);
-            applySongFontSize();
-        };
         if (document.fonts && document.fonts.ready) {
-            document.fonts.ready.then(recompute);
+            document.fonts.ready.then(() => relayout());
         } else {
-            recompute();
+            relayout();
         }
     }
 }
@@ -143,6 +140,129 @@ function bibleTextPlain(text) {
     return text.replace(/\[([^\]]+)\]/g, '$1');
 }
 
+
+// ---------------------------------------------------------------------------
+// Auto line-breaking: split overly long verse lines at natural pause points so
+// the whole verse can render larger. A break is only kept when it measurably
+// increases the fitted font size, so verses whose lines are already balanced
+// pass through untouched.
+
+const measureCtx = document.createElement('canvas').getContext('2d');
+
+function verseLineWidths(lines) {
+    const cs = getComputedStyle(measureEl);
+    // A fixed 100px size is fine: we only compare lines against each other.
+    measureCtx.font = `${cs.fontStyle} ${cs.fontWeight} 100px ${cs.fontFamily}`;
+    return lines.map(l => measureCtx.measureText(l).width);
+}
+
+// Trailing punctuation (allowing closing quotes/brackets after it) marks a
+// phrase boundary — the same places a sung line naturally pauses, which is
+// why breaking there tends to coincide with the hymn's metre.
+const STRONG_PUNCT = /[.;:!?—–]['"”’)\]]*$/;
+const COMMA_PUNCT = /,['"”’)\]]*$/;
+
+// Only lines this long are candidates for breaking. Hymnal lines rarely
+// exceed ~50 characters, so anything past this is two sung phrases printed
+// as one. The floor also stops runaway fragmentation: without it, pure
+// font-size maximisation happily chops a verse into two-word shreds.
+const MIN_BREAK_LINE_CHARS = 52;
+
+// Pick the best point to split one line in two: prefer punctuation, and
+// prefer breaks near the middle so the halves stay balanced. Returns
+// [left, right] or null when there's no acceptable break.
+function bestBreakPoint(line) {
+    const words = line.trim().split(/\s+/);
+    if (words.length < 4 || line.trim().length < MIN_BREAK_LINE_CHARS) return null;
+    const total = words.join(' ').length;
+    let best = null;
+    let bestScore = 0;
+    let offset = 0;
+    for (let i = 1; i < words.length; i++) {
+        offset += words[i - 1].length + 1;
+        const frac = offset / total;
+        // Reject breaks that would leave a stub of a line.
+        if (frac < 0.35 || frac > 0.65) continue;
+        const balance = 1 - Math.abs(frac - 0.5) * 2; // 1 mid-line, 0 at edges
+        let bonus = 0;
+        if (STRONG_PUNCT.test(words[i - 1])) bonus = 0.7;
+        else if (COMMA_PUNCT.test(words[i - 1])) bonus = 0.5;
+        const score = balance + bonus;
+        if (score > bestScore) {
+            bestScore = score;
+            best = i;
+        }
+    }
+    if (best === null) return null;
+    return [words.slice(0, best).join(' '), words.slice(best).join(' ')];
+}
+
+// Repeatedly split the visually widest line, tracking the layout with the
+// largest fitted font along the way. Gains often come in pairs (two long
+// lines must both be broken before either helps), so intermediate steps are
+// never rejected — only the final winner is compared against the original.
+// The verse keeps the hymnal's own line layout unless re-breaking buys
+// clearly larger text.
+const MIN_BREAK_GAIN = 1.15;
+
+function autoBreakVerse(text) {
+    const origSize = measureFitSize(text);
+    if (origSize === null) return text;
+    let lines = text.split('\n');
+    let best = { size: origSize, lines: null };
+    for (let breaks = 0; breaks < 8; breaks++) {
+        const widths = verseLineWidths(lines);
+        let widest = 0;
+        for (let i = 1; i < lines.length; i++) {
+            if (widths[i] > widths[widest]) widest = i;
+        }
+        const split = bestBreakPoint(lines[widest]);
+        if (!split) break;
+        lines = lines.slice(0, widest).concat(split, lines.slice(widest + 1));
+        const size = measureFitSize(lines.join('\n'));
+        if (size === null) break;
+        if (size > best.size) best = { size, lines: lines.slice() };
+    }
+    return (best.lines && best.size >= origSize * MIN_BREAK_GAIN)
+        ? best.lines.join('\n')
+        : text;
+}
+
+function autoBreakEnabled() {
+    const layout = (currentSettings && currentSettings.layout) || {};
+    return layout.autoBreakLines !== false; // missing (older settings) = on
+}
+
+function displayTextFor(original) {
+    return wrapMap.get(original) || original;
+}
+
+// Rebuild the wrap map and the song-wide font size for the current geometry
+// (song change, window resize, font swap, safe-area or toggle change), then
+// refresh the visible slide if its wrapping came out differently. Pass
+// refreshDom=false when the on-screen text is about to be replaced anyway
+// (song change), so the outgoing slide isn't re-wrapped against the new map.
+function relayout(refreshDom = true) {
+    if (!currentVerses.length) return;
+    const isBible = elements.projector.classList.contains('bible-mode');
+    wrapMap = new Map();
+    if (!isBible && autoBreakEnabled()) {
+        for (const v of currentVerses) {
+            if (!v || !v.trim()) continue;
+            const broken = autoBreakVerse(v);
+            if (broken !== v) wrapMap.set(v, broken);
+        }
+    }
+    songFontSize = computeSongFontSize(currentVerses.map(displayTextFor));
+    applySongFontSize();
+    if (refreshDom && currentText && !isBible) {
+        const wrapped = displayTextFor(currentText);
+        if (elements.lyricsText.textContent !== wrapped) {
+            elements.lyricsText.textContent = wrapped;
+        }
+    }
+}
+
 function updateDisplay(data) {
     const { text, label, isBlank, title, author, musical_key, songId, songNumber, verses,
             hasPrev, hasNext, isBible } = data;
@@ -183,7 +303,7 @@ function updateDisplay(data) {
             ? (verses && verses.length ? verses.map(bibleTextPlain) : (text ? [bibleTextPlain(text)] : []))
             : (verses && verses.length ? verses : (text ? [text] : []));
         currentVerses = plainVerses;
-        songFontSize = computeSongFontSize(currentVerses);
+        relayout(false);
     }
 
     currentLabel = label || '';
@@ -202,7 +322,7 @@ function updateDisplay(data) {
         if (isBible) {
             elements.lyricsText.innerHTML = bibleTextToHtml(text);
         } else {
-            elements.lyricsText.textContent = text;
+            elements.lyricsText.textContent = displayTextFor(text);
         }
         applySongFontSize();
         elements.lyricsContainer.classList.remove('transitioning');
@@ -375,18 +495,10 @@ document.addEventListener('DOMContentLoaded', () => {
 let resizeRaf;
 window.addEventListener('resize', () => {
     cancelAnimationFrame(resizeRaf);
-    resizeRaf = requestAnimationFrame(() => {
-        if (!currentVerses.length) return;
-        songFontSize = computeSongFontSize(currentVerses);
-        applySongFontSize();
-    });
+    resizeRaf = requestAnimationFrame(() => relayout());
 });
 
 // The first verse can render before the web font loads; recompute once ready.
 if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => {
-        if (!currentVerses.length) return;
-        songFontSize = computeSongFontSize(currentVerses);
-        applySongFontSize();
-    });
+    document.fonts.ready.then(() => relayout());
 }

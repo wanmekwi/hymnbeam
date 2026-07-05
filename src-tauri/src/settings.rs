@@ -31,6 +31,7 @@ fn default_settings() -> Value {
             "showTitleBar": true,
             "showMetaBar": true,
             "showVerseLabel": false,
+            "autoBreakLines": true,
             "safeAreaPct": 5
         },
         "transition": {
