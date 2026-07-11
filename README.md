@@ -65,9 +65,10 @@ Windows installers ship with releases from **v0.1.5** onwards.
 - **Reference lookup** — type any common abbreviation or variation (`Ecc 9:11`, `ec 9 11`, `ecclesiastes 9:11`) and HymnBeam resolves it to the right verse.
 - **Collections** — group songs into ordered setlists; navigate through them with a single keystroke.
 - **Full-text search** — search songs by title, author, or lyrics; search the entire KJV by keyword.
-- **Song import / export** — JSON, CSV, and plain-text formats.
+- **Song import / export** — JSON, CSV, and plain-text formats. Imports can add to the current library or replace it entirely (with confirmation).
 - **Background images** — upload custom backgrounds per-song or as a global default.
 - **Portable library** — single SQLite database in `~/Library/Application Support/HymnBeam/`.
+- **Data protection** — automatic daily backups (plus before any library replace or restore) with one-click restore; deleted songs recoverable for 30 days with instant undo; duplicate-song finder. All under Settings → Library.
 - **Keyboard-first** — every action reachable without a mouse (see shortcuts below).
 
 ---

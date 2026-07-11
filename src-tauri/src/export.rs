@@ -32,7 +32,7 @@ fn get_all_songs_with_verses() -> Result<Vec<SongWithVerses>, String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare("SELECT id, title, author, musical_key, song_number FROM songs ORDER BY title")
+        .prepare("SELECT id, title, author, musical_key, song_number FROM songs WHERE deleted_at IS NULL ORDER BY title")
         .map_err(|e| e.to_string())?;
 
     let songs: Vec<(i64, String, Option<String>, Option<String>, Option<String>)> = stmt

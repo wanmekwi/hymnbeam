@@ -2,6 +2,7 @@
 
 mod api;
 mod backgrounds;
+mod backup;
 mod bible;
 mod collections;
 mod db;
@@ -36,8 +37,16 @@ struct ImportResult {
 // receive empty bodies there. Those endpoints remain for the non-Tauri
 // browser dev fallback.
 #[tauri::command]
-fn import_songs_from_content(filename: String, content: String) -> Result<ImportResult, String> {
-    let song_ids = import::import_file(&content, &filename)?;
+fn import_songs_from_content(
+    filename: String,
+    content: String,
+    replace: Option<bool>,
+) -> Result<ImportResult, String> {
+    let song_ids = if replace.unwrap_or(false) {
+        import::replace_library(&content, &filename)?
+    } else {
+        import::import_file(&content, &filename)?
+    };
     Ok(ImportResult {
         imported: song_ids.len(),
         song_ids,
@@ -180,6 +189,14 @@ fn send_to_projector(app: tauri::AppHandle, event: String, payload: String) -> R
 fn main() {
     db::set_db_path(db::init_db_path());
     db::init_db().expect("Failed to initialize database");
+
+    // Startup maintenance — both are safety nets, neither may block launch.
+    if let Err(e) = songs::purge_expired_deleted(30) {
+        eprintln!("Trash purge failed: {}", e);
+    }
+    if let Err(e) = backup::auto_backup_if_due() {
+        eprintln!("Automatic backup failed: {}", e);
+    }
 
     println!("HymnBeam starting (API via axum://localhost custom protocol)");
 

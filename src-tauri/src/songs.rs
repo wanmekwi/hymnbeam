@@ -1,6 +1,8 @@
 use crate::db::get_connection;
-use crate::models::{Song, SongSummary, Verse};
+use crate::models::{DeletedSongSummary, DuplicateGroup, DuplicateSong, Song, SongSummary, Verse};
 use rusqlite::params;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 fn get_sort_clause(sort_by: &str) -> &'static str {
     match sort_by {
@@ -26,7 +28,7 @@ pub fn find_song_id_by_number(number: &str) -> Result<Option<i64>, String> {
     }
     let conn = get_connection().map_err(|e| e.to_string())?;
     let id: rusqlite::Result<i64> = conn.query_row(
-        "SELECT id FROM songs WHERE TRIM(song_number) = ?1 LIMIT 1",
+        "SELECT id FROM songs WHERE TRIM(song_number) = ?1 AND deleted_at IS NULL LIMIT 1",
         params![trimmed],
         |row| row.get(0),
     );
@@ -94,7 +96,8 @@ pub fn get_song(song_id: i64) -> Result<Option<Song>, String> {
 
     let song_result: Result<(String, Option<String>, Option<String>, Option<String>), _> =
         conn.query_row(
-            "SELECT title, author, musical_key, song_number FROM songs WHERE id = ?1",
+            "SELECT title, author, musical_key, song_number FROM songs
+             WHERE id = ?1 AND deleted_at IS NULL",
             params![song_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         );
@@ -154,6 +157,7 @@ pub fn get_all_songs(sort_by: &str) -> Result<Vec<SongSummary>, String> {
         SELECT s.id, s.title, s.author, s.musical_key, s.song_number, COUNT(v.id) as verse_count
         FROM songs s
         LEFT JOIN verses v ON s.id = v.song_id
+        WHERE s.deleted_at IS NULL
         GROUP BY s.id
         ORDER BY {}
         "#,
@@ -190,13 +194,13 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
         SELECT DISTINCT s.id, s.title, s.author, s.musical_key, s.song_number, COUNT(v.id) as verse_count
         FROM songs s
         LEFT JOIN verses v ON s.id = v.song_id
-        WHERE s.id IN (
+        WHERE s.deleted_at IS NULL AND (s.id IN (
             SELECT rowid FROM songs_fts WHERE songs_fts MATCH ?1
         ) OR s.id IN (
             SELECT song_id FROM verses WHERE id IN (
                 SELECT rowid FROM verses_fts WHERE verses_fts MATCH ?1
             )
-        )
+        ))
         GROUP BY s.id
         ORDER BY {}
         "#,
@@ -233,12 +237,12 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
         SELECT DISTINCT s.id, s.title, s.author, s.musical_key, s.song_number, COUNT(v.id) as verse_count
         FROM songs s
         LEFT JOIN verses v ON s.id = v.song_id
-        WHERE s.title LIKE ?1 COLLATE NOCASE
+        WHERE s.deleted_at IS NULL AND (s.title LIKE ?1 COLLATE NOCASE
            OR s.author LIKE ?1 COLLATE NOCASE
            OR s.musical_key LIKE ?1 COLLATE NOCASE
            OR s.song_number LIKE ?1
            OR CAST(s.id AS TEXT) LIKE ?1
-           OR EXISTS (SELECT 1 FROM verses v2 WHERE v2.song_id = s.id AND v2.text LIKE ?1 COLLATE NOCASE)
+           OR EXISTS (SELECT 1 FROM verses v2 WHERE v2.song_id = s.id AND v2.text LIKE ?1 COLLATE NOCASE))
         GROUP BY s.id
         ORDER BY {}
         "#,
@@ -269,7 +273,7 @@ pub fn update_song(song_id: i64, song: &Song) -> Result<bool, String> {
 
     let rows_updated = conn
         .execute(
-            "UPDATE songs SET title = ?1, author = ?2, musical_key = ?3, song_number = ?4, updated_at = CURRENT_TIMESTAMP WHERE id = ?5",
+            "UPDATE songs SET title = ?1, author = ?2, musical_key = ?3, song_number = ?4, updated_at = CURRENT_TIMESTAMP WHERE id = ?5 AND deleted_at IS NULL",
             params![song.title, song.author, song.musical_key, song.song_number, song_id],
         )
         .map_err(|e| e.to_string())?;
@@ -339,9 +343,233 @@ pub fn update_song(song_id: i64, song: &Song) -> Result<bool, String> {
     Ok(true)
 }
 
+// Groups live songs whose titles match after trimming and case-folding.
+// Within a group, equal content hashes mean word-for-word identical copies.
+pub fn find_duplicates() -> Result<Vec<DuplicateGroup>, String> {
+    let conn = get_connection().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT s.id, s.title, s.author, s.song_number,
+                   COUNT(v.id) as verse_count,
+                   LOWER(TRIM(s.title)) as norm_title
+            FROM songs s
+            LEFT JOIN verses v ON s.id = v.song_id
+            WHERE s.deleted_at IS NULL
+              AND LOWER(TRIM(s.title)) IN (
+                SELECT LOWER(TRIM(title)) FROM songs
+                WHERE deleted_at IS NULL
+                GROUP BY LOWER(TRIM(title))
+                HAVING COUNT(*) > 1
+              )
+            GROUP BY s.id
+            ORDER BY norm_title, s.id
+            "#,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows: Vec<(i64, String, Option<String>, Option<String>, i32, String)> = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut vstmt = conn
+        .prepare("SELECT text FROM verses WHERE song_id = ?1 ORDER BY position")
+        .map_err(|e| e.to_string())?;
+
+    let mut groups: Vec<DuplicateGroup> = Vec::new();
+    let mut current_key: Option<String> = None;
+
+    for (id, title, author, song_number, verse_count, norm_title) in rows {
+        let verse_texts: Vec<String> = vstmt
+            .query_map(params![id], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut hasher = DefaultHasher::new();
+        title.trim().to_lowercase().hash(&mut hasher);
+        for t in &verse_texts {
+            t.trim().hash(&mut hasher);
+        }
+        let content_hash = format!("{:016x}", hasher.finish());
+
+        let song = DuplicateSong {
+            id,
+            title: title.clone(),
+            author,
+            song_number,
+            verse_count,
+            content_hash,
+        };
+
+        if current_key.as_deref() != Some(norm_title.as_str()) {
+            groups.push(DuplicateGroup {
+                title,
+                songs: Vec::new(),
+            });
+            current_key = Some(norm_title);
+        }
+        groups.last_mut().unwrap().songs.push(song);
+    }
+
+    Ok(groups)
+}
+
+// Removes every song from the library. Verses, song_tags and setlist entries
+// go via FK cascade; setlists themselves survive (emptied, not deleted). The
+// FTS indexes use the 'delete-all' command because they are external-content
+// tables — row-by-row DELETEs need the content rows to still be present.
+pub fn clear_all_songs() -> Result<(), String> {
+    let conn = get_connection().map_err(|e| e.to_string())?;
+
+    conn.execute_batch(
+        r#"
+        INSERT INTO songs_fts(songs_fts) VALUES('delete-all');
+        INSERT INTO verses_fts(verses_fts) VALUES('delete-all');
+        DELETE FROM songs;
+        DELETE FROM tags;
+        "#,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_util::setup_temp_db;
+
+    fn make_song(title: &str, number: Option<&str>, verse_texts: &[&str]) -> Song {
+        Song {
+            id: None,
+            title: title.to_string(),
+            author: None,
+            musical_key: None,
+            song_number: number.map(|n| n.to_string()),
+            verses: verse_texts
+                .iter()
+                .enumerate()
+                .map(|(i, t)| Verse {
+                    id: None,
+                    label: format!("Verse {}", i + 1),
+                    text: t.to_string(),
+                    position: None,
+                })
+                .collect(),
+            tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn soft_delete_hides_restores_and_purges() {
+        let _db = setup_temp_db();
+
+        let id = create_song(&make_song("Abide With Me", Some("27"), &["fast falls the eventide"]))
+            .expect("create");
+
+        assert!(delete_song(id).expect("delete"));
+        // Gone from every read path…
+        assert!(get_all_songs("title").unwrap().is_empty());
+        assert!(get_song(id).unwrap().is_none());
+        assert!(search_songs("eventide", "title").unwrap().is_empty());
+        assert!(find_song_id_by_number("27").unwrap().is_none());
+        // …but visible in the trash.
+        let trash = list_deleted_songs().unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].title, "Abide With Me");
+
+        // Deleting again is a no-op.
+        assert!(!delete_song(id).expect("double delete"));
+
+        assert!(restore_song(id).expect("restore"));
+        assert_eq!(get_all_songs("title").unwrap().len(), 1);
+        assert_eq!(search_songs("eventide", "title").unwrap().len(), 1);
+        assert_eq!(find_song_id_by_number("27").unwrap(), Some(id));
+        assert!(list_deleted_songs().unwrap().is_empty());
+
+        // Purge only removes entries past the age threshold.
+        assert!(delete_song(id).expect("delete again"));
+        assert_eq!(purge_expired_deleted(30).expect("purge fresh"), 0);
+        assert_eq!(list_deleted_songs().unwrap().len(), 1);
+        // Backdate the deletion past the threshold and purge again.
+        {
+            let conn = get_connection().unwrap();
+            conn.execute(
+                "UPDATE songs SET deleted_at = datetime('now', '-40 days') WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+        }
+        assert_eq!(purge_expired_deleted(30).expect("purge old"), 1);
+        assert!(list_deleted_songs().unwrap().is_empty());
+        assert!(!restore_song(id).expect("restore purged"));
+    }
+
+    #[test]
+    fn duplicate_finder_groups_by_title_and_flags_identical_copies() {
+        let _db = setup_temp_db();
+
+        let a = create_song(&make_song("Amazing Grace", None, &["how sweet the sound"])).unwrap();
+        let b = create_song(&make_song("amazing grace ", None, &["how sweet the sound"])).unwrap();
+        let c = create_song(&make_song("Amazing Grace", None, &["different words entirely"])).unwrap();
+        create_song(&make_song("Just As I Am", None, &["without one plea"])).unwrap();
+
+        let groups = find_duplicates().expect("find duplicates");
+        assert_eq!(groups.len(), 1);
+        let group = &groups[0];
+        assert_eq!(group.songs.len(), 3);
+
+        let hash_of = |id: i64| {
+            group
+                .songs
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| s.content_hash.clone())
+                .expect("song in group")
+        };
+        assert_eq!(hash_of(a), hash_of(b));
+        assert_ne!(hash_of(a), hash_of(c));
+
+        // Trashed songs never appear as duplicates.
+        delete_song(b).unwrap();
+        delete_song(c).unwrap();
+        assert!(find_duplicates().unwrap().is_empty());
+    }
+}
+
+// Soft delete: the song is stamped deleted_at and drops out of every read
+// path, but the row (and its verses, tags and setlist entries) survive so a
+// restore brings everything back. Hard removal happens via purge or
+// clear_all_songs.
 pub fn delete_song(song_id: i64) -> Result<bool, String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
 
+    // Bail out unless the song exists and is live: deleting an FTS entry
+    // twice corrupts an external-content FTS5 index ("malformed" errors).
+    let live: Result<bool, _> = conn.query_row(
+        "SELECT deleted_at IS NULL FROM songs WHERE id = ?1",
+        params![song_id],
+        |row| row.get(0),
+    );
+    match live {
+        Ok(true) => {}
+        Ok(false) => return Ok(false),
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(false),
+        Err(e) => return Err(e.to_string()),
+    }
+
+    // Take it out of search immediately — the FTS rows are recreated on restore.
     conn.execute("DELETE FROM songs_fts WHERE rowid = ?1", params![song_id])
         .map_err(|e| e.to_string())?;
 
@@ -359,9 +587,81 @@ pub fn delete_song(song_id: i64) -> Result<bool, String> {
             .map_err(|e| e.to_string())?;
     }
 
-    let rows_deleted = conn
-        .execute("DELETE FROM songs WHERE id = ?1", params![song_id])
+    let rows_updated = conn
+        .execute(
+            "UPDATE songs SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?1 AND deleted_at IS NULL",
+            params![song_id],
+        )
         .map_err(|e| e.to_string())?;
 
-    Ok(rows_deleted > 0)
+    Ok(rows_updated > 0)
+}
+
+pub fn restore_song(song_id: i64) -> Result<bool, String> {
+    let conn = get_connection().map_err(|e| e.to_string())?;
+
+    let rows_updated = conn
+        .execute(
+            "UPDATE songs SET deleted_at = NULL WHERE id = ?1 AND deleted_at IS NOT NULL",
+            params![song_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if rows_updated == 0 {
+        return Ok(false);
+    }
+
+    // Rebuild the FTS rows removed at delete time.
+    conn.execute(
+        "INSERT INTO songs_fts (rowid, title, author)
+         SELECT id, title, COALESCE(author, '') FROM songs WHERE id = ?1",
+        params![song_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT INTO verses_fts (rowid, text)
+         SELECT id, text FROM verses WHERE song_id = ?1",
+        params![song_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(true)
+}
+
+pub fn list_deleted_songs() -> Result<Vec<DeletedSongSummary>, String> {
+    let conn = get_connection().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, title, author, deleted_at FROM songs
+             WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let songs: Vec<DeletedSongSummary> = stmt
+        .query_map([], |row| {
+            Ok(DeletedSongSummary {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                author: row.get(2)?,
+                deleted_at: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(songs)
+}
+
+// Hard-deletes songs trashed more than `days` days ago. Their FTS rows were
+// already removed at soft-delete time; verses/tags/setlist entries cascade.
+pub fn purge_expired_deleted(days: i64) -> Result<usize, String> {
+    let conn = get_connection().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM songs WHERE deleted_at IS NOT NULL
+         AND deleted_at < datetime('now', ?1)",
+        params![format!("-{} days", days)],
+    )
+    .map_err(|e| e.to_string())
 }

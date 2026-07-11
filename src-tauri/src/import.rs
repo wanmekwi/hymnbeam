@@ -24,8 +24,10 @@ fn find_existing_song_id(song: &Song) -> Result<Option<i64>, String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
     let target = fingerprint(&song.title, &song.verses);
 
+    // Trashed songs don't count as duplicates — otherwise a re-import would
+    // silently "succeed" by pointing at a song the user just deleted.
     let mut stmt = conn
-        .prepare("SELECT id FROM songs WHERE title = ?1")
+        .prepare("SELECT id FROM songs WHERE title = ?1 AND deleted_at IS NULL")
         .map_err(|e| e.to_string())?;
     let candidate_ids: Vec<i64> = stmt
         .query_map(params![song.title], |row| row.get(0))
@@ -156,18 +158,29 @@ fn parse_lyrics_to_verses(lyrics: &str) -> Vec<Verse> {
     verses
 }
 
-pub fn import_json(content: &str) -> Result<Vec<i64>, String> {
+fn parse_json(content: &str) -> Result<Vec<Song>, String> {
     let data: serde_json::Value = serde_json::from_str(content).map_err(|e| e.to_string())?;
 
     if let Some(arr) = data.as_array() {
-        import_hymns_array(arr)
+        let mut songs = Vec::new();
+        for item in arr {
+            let hymn: ImportedHymn = match serde_json::from_value(item.clone()) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+            if hymn.title.trim().is_empty() {
+                continue;
+            }
+            songs.push(hymn_to_song(&hymn));
+        }
+        Ok(songs)
     } else {
         let hymn: ImportedHymn = serde_json::from_value(data).map_err(|e| e.to_string())?;
-        import_single_hymn(&hymn).map(|id| vec![id])
+        Ok(vec![hymn_to_song(&hymn)])
     }
 }
 
-fn import_single_hymn(hymn: &ImportedHymn) -> Result<i64, String> {
+fn hymn_to_song(hymn: &ImportedHymn) -> Song {
     let verses = if let Some(ref v) = hymn.verses {
         v.iter()
             .enumerate()
@@ -189,7 +202,7 @@ fn import_single_hymn(hymn: &ImportedHymn) -> Result<i64, String> {
 
     let tags = hymn.tags.clone().unwrap_or_default();
 
-    let song = Song {
+    Song {
         id: None,
         title: hymn.title.clone(),
         author: hymn.author.clone().filter(|a| !a.is_empty()),
@@ -197,38 +210,10 @@ fn import_single_hymn(hymn: &ImportedHymn) -> Result<i64, String> {
         song_number: hymn.song_number.clone().filter(|n| !n.is_empty()),
         verses,
         tags,
-    };
-
-    if let Some(existing_id) = find_existing_song_id(&song)? {
-        return Ok(existing_id);
     }
-
-    create_song(&song)
 }
 
-fn import_hymns_array(arr: &[serde_json::Value]) -> Result<Vec<i64>, String> {
-    let mut song_ids = Vec::new();
-
-    for item in arr {
-        let hymn: ImportedHymn = match serde_json::from_value(item.clone()) {
-            Ok(h) => h,
-            Err(_) => continue,
-        };
-
-        if hymn.title.trim().is_empty() {
-            continue;
-        }
-
-        match import_single_hymn(&hymn) {
-            Ok(id) => song_ids.push(id),
-            Err(e) => eprintln!("Error importing '{}': {}", hymn.title, e),
-        }
-    }
-
-    Ok(song_ids)
-}
-
-pub fn import_csv(content: &str) -> Result<Vec<i64>, String> {
+fn parse_csv(content: &str) -> Result<Vec<Song>, String> {
     let mut reader = csv::Reader::from_reader(content.as_bytes());
 
     // Resolve columns by header name so any column order is accepted.
@@ -272,7 +257,7 @@ pub fn import_csv(content: &str) -> Result<Vec<i64>, String> {
         }
     }
 
-    let mut song_ids = Vec::new();
+    let mut songs = Vec::new();
 
     for title in order {
         let (author, verses_data) = songs_data.remove(&title).unwrap();
@@ -286,7 +271,7 @@ pub fn import_csv(content: &str) -> Result<Vec<i64>, String> {
             })
             .collect();
 
-        let song = Song {
+        songs.push(Song {
             id: None,
             title,
             author,
@@ -294,15 +279,13 @@ pub fn import_csv(content: &str) -> Result<Vec<i64>, String> {
             song_number: None,
             verses,
             tags: Vec::new(),
-        };
-
-        song_ids.push(create_song(&song)?);
+        });
     }
 
-    Ok(song_ids)
+    Ok(songs)
 }
 
-pub fn import_text(content: &str) -> Result<i64, String> {
+fn parse_text(content: &str) -> Result<Song, String> {
     let lines: Vec<&str> = content.lines().collect();
     if lines.is_empty() {
         return Err("Empty file".to_string());
@@ -361,7 +344,7 @@ pub fn import_text(content: &str) -> Result<i64, String> {
         }
     }
 
-    let song = Song {
+    Ok(Song {
         id: None,
         title,
         author,
@@ -369,12 +352,10 @@ pub fn import_text(content: &str) -> Result<i64, String> {
         song_number: None,
         verses,
         tags: Vec::new(),
-    };
-
-    create_song(&song)
+    })
 }
 
-pub fn import_file(content: &str, filename: &str) -> Result<Vec<i64>, String> {
+fn parse_file(content: &str, filename: &str) -> Result<Vec<Song>, String> {
     // Windows editors often prepend a UTF-8 BOM, which serde_json and the
     // CSV header lookup both choke on.
     let content = content.trim_start_matches('\u{feff}');
@@ -386,34 +367,65 @@ pub fn import_file(content: &str, filename: &str) -> Result<Vec<i64>, String> {
         .to_lowercase();
 
     match ext.as_str() {
-        "json" => import_json(content),
-        "csv" => import_csv(content),
-        "txt" | "text" => import_text(content).map(|id| vec![id]),
+        "json" => parse_json(content),
+        "csv" => parse_csv(content),
+        "txt" | "text" => parse_text(content).map(|song| vec![song]),
         _ => Err(format!("Unsupported file type: {}", ext)),
     }
+}
+
+pub fn import_file(content: &str, filename: &str) -> Result<Vec<i64>, String> {
+    let songs = parse_file(content, filename)?;
+
+    let mut song_ids = Vec::new();
+    for song in &songs {
+        // Re-importing the same file shouldn't duplicate rows.
+        if let Some(existing_id) = find_existing_song_id(song)? {
+            song_ids.push(existing_id);
+            continue;
+        }
+        match create_song(song) {
+            Ok(id) => song_ids.push(id),
+            Err(e) => eprintln!("Error importing '{}': {}", song.title, e),
+        }
+    }
+
+    Ok(song_ids)
+}
+
+// Wipes the current library and imports `content` in its place. The file is
+// parsed up front so a malformed or empty file can never destroy existing
+// data — the wipe only happens once at least one song has parsed.
+pub fn replace_library(content: &str, filename: &str) -> Result<Vec<i64>, String> {
+    let songs = parse_file(content, filename)?;
+    if songs.is_empty() {
+        return Err("No songs found in file — existing library left untouched".to_string());
+    }
+
+    // Snapshot the outgoing library so a replace is always recoverable.
+    crate::backup::create_backup("pre-replace")?;
+
+    crate::songs::clear_all_songs()?;
+
+    let mut song_ids = Vec::new();
+    for song in &songs {
+        match create_song(song) {
+            Ok(id) => song_ids.push(id),
+            Err(e) => eprintln!("Error importing '{}': {}", song.title, e),
+        }
+    }
+
+    Ok(song_ids)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db;
-
-    fn setup_temp_db() {
-        let path = std::env::temp_dir().join(format!(
-            "hymnbeam-test-{}-{}.db",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        db::set_db_path(path);
-        db::init_db().expect("init test db");
-    }
+    use crate::db::test_util::setup_temp_db;
 
     #[test]
     fn imports_json_with_utf8_bom() {
-        setup_temp_db();
+        let _db = setup_temp_db();
 
         let json = "\u{feff}[{\"title\": \"Amazing Grace\", \"lyrics\": \"Amazing grace how sweet the sound\\n\\nThat saved a wretch like me\"}]";
         let ids = import_file(json, "songs.json").expect("BOM-prefixed JSON should import");
@@ -423,5 +435,37 @@ mod tests {
         let json_crlf = "{\"title\": \"It Is Well\", \"lyrics\": \"When peace like a river\\r\\n\\r\\nAttendeth my way\"}";
         let ids = import_file(json_crlf, "song.json").expect("CRLF JSON should import");
         assert_eq!(ids.len(), 1);
+    }
+
+    #[test]
+    fn replace_library_swaps_songs_but_never_wipes_on_bad_input() {
+        let _db = setup_temp_db();
+
+        let old = "[{\"title\": \"Old Song\", \"lyrics\": \"the former words\"}]";
+        import_file(old, "old.json").expect("seed import");
+
+        // A file that fails to parse, or parses to nothing, must leave the
+        // existing library untouched.
+        assert!(replace_library("not json at all", "broken.json").is_err());
+        assert!(replace_library("[]", "empty.json").is_err());
+        assert!(replace_library("data", "songs.xyz").is_err());
+        let songs = crate::songs::get_all_songs("title").expect("list songs");
+        assert_eq!(songs.len(), 1);
+        assert_eq!(songs[0].title, "Old Song");
+
+        let new = "[\
+            {\"title\": \"New Dawn\", \"lyrics\": \"fresh words\"},\
+            {\"title\": \"Second Hymn\", \"lyrics\": \"more words\"}\
+        ]";
+        let ids = replace_library(new, "new.json").expect("replace should succeed");
+        assert_eq!(ids.len(), 2);
+
+        let songs = crate::songs::get_all_songs("title").expect("list songs");
+        let titles: Vec<&str> = songs.iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, vec!["New Dawn", "Second Hymn"]);
+
+        // Search must only find the new library — the FTS indexes were reset.
+        assert!(crate::songs::search_songs("former", "title").expect("search").is_empty());
+        assert_eq!(crate::songs::search_songs("fresh", "title").expect("search").len(), 1);
     }
 }

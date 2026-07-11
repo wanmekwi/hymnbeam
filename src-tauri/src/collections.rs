@@ -8,9 +8,10 @@ pub fn get_all_collections() -> Result<Vec<CollectionSummary>, String> {
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT sl.id, sl.name, COUNT(ss.id) as song_count
+            SELECT sl.id, sl.name, COUNT(s.id) as song_count
             FROM setlists sl
             LEFT JOIN setlist_songs ss ON ss.setlist_id = sl.id
+            LEFT JOIN songs s ON s.id = ss.song_id AND s.deleted_at IS NULL
             GROUP BY sl.id
             ORDER BY sl.created_at DESC
             "#,
@@ -52,7 +53,7 @@ pub fn get_collection(collection_id: i64) -> Result<Option<Collection>, String> 
             r#"
             SELECT ss.id, ss.song_id, ss.position, s.title, s.author, s.musical_key
             FROM setlist_songs ss
-            JOIN songs s ON s.id = ss.song_id
+            JOIN songs s ON s.id = ss.song_id AND s.deleted_at IS NULL
             WHERE ss.setlist_id = ?1
             ORDER BY ss.position
             "#,

@@ -15,12 +15,13 @@ use crate::collections::{
 };
 use crate::backgrounds::{read_image, save_image};
 use crate::export::{export_csv, export_json, export_txt};
-use crate::import::import_file;
+use crate::import::{import_file, replace_library};
 use crate::models::Song;
 use crate::settings::{get_settings, update_settings};
+use crate::backup::{create_backup, list_backups, restore_backup};
 use crate::songs::{
-    create_song, delete_song, find_song_id_by_number, get_all_songs, get_song, search_songs,
-    update_song,
+    create_song, delete_song, find_duplicates, find_song_id_by_number, get_all_songs, get_song,
+    list_deleted_songs, restore_song, search_songs, update_song,
 };
 
 #[derive(Serialize)]
@@ -185,8 +186,23 @@ async fn delete_existing_song(Path(song_id): Path<i64>) -> Result<impl IntoRespo
     }
 }
 
-async fn import_songs(mut multipart: Multipart) -> Result<impl IntoResponse, StatusCode> {
-    while let Some(field) = multipart.next_field().await.map_err(|_| StatusCode::BAD_REQUEST)? {
+#[derive(Deserialize)]
+struct ImportQuery {
+    #[serde(default)]
+    replace: bool,
+}
+
+async fn import_songs(
+    Query(params): Query<ImportQuery>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let bad_request = |msg: &str| (StatusCode::BAD_REQUEST, msg.to_string());
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| bad_request("Invalid upload"))?
+    {
         let filename = field
             .file_name()
             .map(|s| s.to_string())
@@ -200,13 +216,19 @@ async fn import_songs(mut multipart: Multipart) -> Result<impl IntoResponse, Sta
 
         let allowed = ["json", "csv", "txt", "text"];
         if !allowed.contains(&ext.as_str()) {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(bad_request("Unsupported file type"));
         }
 
-        let content = field.bytes().await.map_err(|_| StatusCode::BAD_REQUEST)?;
-        let content_str = String::from_utf8(content.to_vec()).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let content = field.bytes().await.map_err(|_| bad_request("Invalid upload"))?;
+        let content_str =
+            String::from_utf8(content.to_vec()).map_err(|_| bad_request("File is not valid UTF-8"))?;
 
-        let song_ids = import_file(&content_str, &filename).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let result = if params.replace {
+            replace_library(&content_str, &filename)
+        } else {
+            import_file(&content_str, &filename)
+        };
+        let song_ids = result.map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
         return Ok(Json(ImportResponse {
             imported: song_ids.len(),
@@ -214,7 +236,53 @@ async fn import_songs(mut multipart: Multipart) -> Result<impl IntoResponse, Sta
         }));
     }
 
-    Err(StatusCode::BAD_REQUEST)
+    Err(bad_request("No file provided"))
+}
+
+async fn list_trash() -> Result<impl IntoResponse, StatusCode> {
+    list_deleted_songs()
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn restore_trashed_song(Path(song_id): Path<i64>) -> Result<impl IntoResponse, StatusCode> {
+    match restore_song(song_id) {
+        Ok(true) => Ok(Json(MessageResponse {
+            message: "Song restored",
+        })),
+        Ok(false) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn list_duplicate_songs() -> Result<impl IntoResponse, StatusCode> {
+    find_duplicates()
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn get_backups() -> Result<impl IntoResponse, StatusCode> {
+    list_backups()
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn create_backup_handler() -> Result<impl IntoResponse, (StatusCode, String)> {
+    create_backup("manual")
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn restore_backup_handler(
+    Path(name): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    restore_backup(&name)
+        .map(|_| {
+            Json(MessageResponse {
+                message: "Backup restored",
+            })
+        })
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))
 }
 
 async fn export_songs_handler(Query(params): Query<ExportQuery>) -> Result<Response, StatusCode> {
@@ -438,6 +506,11 @@ pub fn create_router() -> Router {
                 .put(update_existing_song)
                 .delete(delete_existing_song),
         )
+        .route("/songs/{song_id}/restore", post(restore_trashed_song))
+        .route("/trash", get(list_trash))
+        .route("/duplicates", get(list_duplicate_songs))
+        .route("/backups", get(get_backups).post(create_backup_handler))
+        .route("/backups/{name}/restore", post(restore_backup_handler))
         .route("/import", post(import_songs))
         .route("/export", get(export_songs_handler))
         .route("/collections", get(list_collections).post(create_new_collection))

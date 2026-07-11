@@ -86,6 +86,35 @@ pub struct CollectionSummary {
     pub song_count: i32,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DeletedSongSummary {
+    pub id: i64,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    pub deleted_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DuplicateSong {
+    pub id: i64,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub song_number: Option<String>,
+    pub verse_count: i32,
+    // Hash of title + verse texts; equal hashes within a group mean the
+    // copies are word-for-word identical.
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DuplicateGroup {
+    pub title: String,
+    pub songs: Vec<DuplicateSong>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportedHymn {

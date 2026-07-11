@@ -125,6 +125,10 @@ pub fn init_db() -> SqliteResult<()> {
         "CREATE INDEX IF NOT EXISTS idx_songs_number ON songs(song_number);",
     )?;
 
+    // Soft-delete support: trashed songs carry a timestamp and are filtered
+    // out of every read path until restored or purged.
+    add_column_if_missing(&conn, "songs", "deleted_at", "TIMESTAMP")?;
+
     conn.execute_batch(
         r#"
         CREATE VIRTUAL TABLE IF NOT EXISTS songs_fts USING fts5(
@@ -163,4 +167,30 @@ pub fn init_db() -> SqliteResult<()> {
     crate::bible::ensure_bible_loaded(&conn)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+pub mod test_util {
+    use std::sync::{Mutex, MutexGuard};
+
+    // The db path/pool are process-wide OnceCells, so every test in this
+    // binary shares one database. Tests that touch it hold this lock and
+    // start from an empty library.
+    static DB_LOCK: Mutex<()> = Mutex::new(());
+
+    pub fn setup_temp_db() -> MutexGuard<'static, ()> {
+        let guard = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::env::temp_dir().join(format!(
+            "hymnbeam-test-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        super::set_db_path(path);
+        super::init_db().expect("init test db");
+        crate::songs::clear_all_songs().expect("start from an empty library");
+        guard
+    }
 }

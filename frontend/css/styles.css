@@ -730,6 +730,9 @@ body {
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    gap: 12px;
     color: var(--text-primary);
     font-size: 13px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
@@ -742,6 +745,22 @@ body {
 .toast.visible {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+    /* The toast can carry an action button (e.g. Undo). */
+    pointer-events: auto;
+}
+
+.toast-action {
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+}
+
+.toast-action:hover {
+    color: var(--accent-hover);
 }
 
 /* Modal */
@@ -836,6 +855,31 @@ body {
 }
 
 .drop-zone span {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.replace-library-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 16px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.replace-library-option input[type="checkbox"] {
+    margin-top: 2px;
+    accent-color: #dc2626;
+}
+
+.replace-library-option span {
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.replace-library-option small {
+    display: block;
     font-size: 12px;
     color: var(--text-muted);
 }
@@ -1619,6 +1663,92 @@ body {
     grid-column: 2;
     grid-row: 2;
     margin-top: 4px;
+}
+
+/* The Library tab is maintenance, not display — the projector preview would
+   just be noise there. */
+.settings-body.library-mode .settings-preview-wrap {
+    display: none;
+}
+
+.library-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.library-section + .library-section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+}
+
+.library-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.library-section-header h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.library-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.library-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+}
+
+.library-list .item-main {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.library-list .item-meta {
+    color: var(--text-muted);
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.library-list .empty {
+    background: transparent;
+    color: var(--text-muted);
+    justify-content: flex-start;
+}
+
+.library-list li.group-header {
+    background: transparent;
+    padding: 8px 0 0;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.badge-identical {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent-glow);
+    color: var(--accent);
+    flex-shrink: 0;
 }
 
 .settings-preview {

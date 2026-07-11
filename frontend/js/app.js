@@ -96,6 +96,7 @@ const elements = {
     closeModal: document.getElementById('closeModal'),
     dropZone: document.getElementById('dropZone'),
     fileInput: document.getElementById('fileInput'),
+    replaceLibraryCheck: document.getElementById('replaceLibraryCheck'),
     toast: document.getElementById('toast'),
     sortSelect: document.getElementById('sortSelect'),
     newSongBtn: document.getElementById('newSongBtn'),
@@ -112,7 +113,13 @@ const elements = {
     songPasteInput: document.getElementById('songPasteInput'),
     quickNav: document.getElementById('quickNav'),
     cancelEditBtn: document.getElementById('cancelEditBtn'),
+    backupNowBtn: document.getElementById('backupNowBtn'),
+    backupList: document.getElementById('backupList'),
+    trashList: document.getElementById('trashList'),
+    scanDuplicatesBtn: document.getElementById('scanDuplicatesBtn'),
+    duplicateList: document.getElementById('duplicateList'),
     confirmModal: document.getElementById('confirmModal'),
+    confirmTitle: document.getElementById('confirmTitle'),
     confirmMessage: document.getElementById('confirmMessage'),
     cancelDeleteBtn: document.getElementById('cancelDeleteBtn'),
     confirmDeleteBtn: document.getElementById('confirmDeleteBtn'),
@@ -653,12 +660,39 @@ function jumpToVerse(index) {
 
 let importInFlight = false;
 
-async function importFiles(files) {
+function importFiles(files) {
+    if (!files || files.length === 0) return;
+    // Copy the FileList: the file input is cleared below, and a replace
+    // deferred behind the confirm dialog must still read the files.
+    const fileList = Array.from(files);
+    // Clear immediately so picking the same file after a cancelled replace
+    // still fires the input's change event.
+    elements.fileInput.value = '';
+
+    if (elements.replaceLibraryCheck.checked) {
+        const what = fileList.length === 1
+            ? `"${fileList[0].name}"`
+            : `these ${fileList.length} files`;
+        // Swap modals — stacking the confirm dialog over the import modal
+        // renders both semi-transparent layers on top of each other.
+        closeImportModal();
+        openConfirm({
+            title: 'Replace Library',
+            message: `Delete every song in your library and replace it with the contents of ${what}? This cannot be undone.`,
+            confirmLabel: 'Replace Library',
+            onConfirm: () => performImport(fileList, true),
+        });
+        return;
+    }
+
+    performImport(fileList, false);
+}
+
+async function performImport(files, replace) {
     // Without this guard a double-click on the drop zone (or a second drop
     // while the first is still posting) fires a second POST /import — and
     // before the backend learned to dedupe that produced a doubled library.
     if (importInFlight) return;
-    if (!files || files.length === 0) return;
     importInFlight = true;
     elements.dropZone.classList.add('busy');
     elements.dropZone.style.pointerEvents = 'none';
@@ -666,6 +700,9 @@ async function importFiles(files) {
 
     let importedCount = 0;
     let lastError = '';
+    // In replace mode only the first file wipes the library; any further
+    // files are added on top of the fresh one.
+    let replaceNext = replace;
 
     try {
         for (const file of files) {
@@ -677,18 +714,21 @@ async function importFiles(files) {
                     const result = await window.__TAURI__.core.invoke('import_songs_from_content', {
                         filename: file.name,
                         content: await file.text(),
+                        replace: replaceNext,
                     });
                     importedCount += result.imported;
+                    replaceNext = false;
                 } else {
                     const formData = new FormData();
                     formData.set('file', file);
-                    const response = await fetch(`${API_URL}/import`, {
+                    const response = await fetch(`${API_URL}/import${replaceNext ? '?replace=true' : ''}`, {
                         method: 'POST',
                         body: formData
                     });
                     if (response.ok) {
                         const result = await response.json();
                         importedCount += result.imported;
+                        replaceNext = false;
                     } else {
                         const detail = await response.text().catch(() => '');
                         lastError = detail || `Import failed (${response.status})`;
@@ -703,8 +743,22 @@ async function importFiles(files) {
             }
         }
 
+        const replaced = replace && !replaceNext;
+        if (replaced) {
+            // The whole old library is gone — drop any state that points at it.
+            state.currentSong = null;
+            state.currentVerseIndex = 0;
+            renderSongDisplay();
+            fetchCollections();
+            if (state.openCollection?.id != null) {
+                openCollectionDetail(state.openCollection.id, { showView: false });
+            }
+        }
+
         if (importedCount > 0) {
-            updateStatus(`Imported ${importedCount} song${importedCount !== 1 ? 's' : ''}`);
+            updateStatus(replaced
+                ? `Library replaced — ${importedCount} song${importedCount !== 1 ? 's' : ''} imported`
+                : `Imported ${importedCount} song${importedCount !== 1 ? 's' : ''}`);
             await fetchSongs();
             openLibraryTab();
         } else if (lastError) {
@@ -725,6 +779,8 @@ async function importFiles(files) {
 
 
 function openImportModal() {
+    // Replacing the library is opt-in on every visit — never sticky.
+    elements.replaceLibraryCheck.checked = false;
     elements.importModal.classList.add('active');
 }
 
@@ -735,16 +791,28 @@ function closeImportModal() {
 
 
 let toastTimer = null;
-function updateStatus(message) {
+function updateStatus(message, action = null) {
     // "connected" is just an internal signal that the backend handshake
     // succeeded — no need to surface it to the user.
     if (!message || message === 'connected') return;
 
     const toast = elements.toast;
     toast.textContent = message;
+    if (action) {
+        const btn = document.createElement('button');
+        btn.className = 'toast-action';
+        btn.textContent = action.label;
+        btn.addEventListener('click', () => {
+            clearTimeout(toastTimer);
+            toast.classList.remove('visible');
+            action.onClick();
+        });
+        toast.appendChild(btn);
+    }
     toast.classList.add('visible');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.classList.remove('visible'), 2500);
+    // Leave actionable toasts up longer — they invite a click.
+    toastTimer = setTimeout(() => toast.classList.remove('visible'), action ? 6000 : 2500);
 }
 
 
@@ -931,14 +999,32 @@ async function saveSong() {
 }
 
 
-function openDeleteConfirm() {
-    if (!state.currentSong) return;
-    elements.confirmMessage.textContent = `Are you sure you want to delete "${state.currentSong.title}"?`;
+// The confirm modal is shared: whoever opens it supplies the action to run
+// when the destructive button is pressed.
+let confirmHandler = null;
+
+function openConfirm({ title, message, confirmLabel, onConfirm }) {
+    elements.confirmTitle.textContent = title;
+    elements.confirmMessage.textContent = message;
+    elements.confirmDeleteBtn.textContent = confirmLabel;
+    confirmHandler = onConfirm;
     elements.confirmModal.classList.add('active');
 }
 
 
+function openDeleteConfirm() {
+    if (!state.currentSong) return;
+    openConfirm({
+        title: 'Delete Song',
+        message: `Are you sure you want to delete "${state.currentSong.title}"?`,
+        confirmLabel: 'Delete',
+        onConfirm: deleteSong,
+    });
+}
+
+
 function closeDeleteConfirm() {
+    confirmHandler = null;
     elements.confirmModal.classList.remove('active');
 }
 
@@ -954,16 +1040,35 @@ async function deleteSong() {
         if (!response.ok) throw new Error('Failed to delete song');
 
         const title = state.currentSong.title;
+        const deletedId = state.currentSong.id;
         state.currentSong = null;
         state.currentVerseIndex = 0;
 
         closeDeleteConfirm();
         renderSongDisplay();
         await fetchSongs();
-        updateStatus(`Deleted "${title}"`);
+        fetchCollections();
+        updateStatus(`Deleted "${title}"`, {
+            label: 'Undo',
+            onClick: () => undoDelete(deletedId, title),
+        });
     } catch (error) {
         console.error('Error deleting song:', error);
         updateStatus('Failed to delete song');
+    }
+}
+
+
+async function undoDelete(songId, title) {
+    try {
+        const response = await fetch(`${API_URL}/songs/${songId}/restore`, { method: 'POST' });
+        if (!response.ok) throw new Error('Failed to restore song');
+        await fetchSongs();
+        fetchCollections();
+        updateStatus(`Restored "${title}"`);
+    } catch (error) {
+        console.error('Error restoring song:', error);
+        updateStatus('Failed to restore song');
     }
 }
 
@@ -1567,6 +1672,232 @@ function closeSettingsModal() {
     elements.settingsModal.classList.remove('active');
 }
 
+
+// ----- Library maintenance (settings > Library tab) -----
+
+function libraryListEmpty(listEl, text) {
+    listEl.textContent = '';
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = text;
+    listEl.appendChild(li);
+}
+
+function formatBytes(bytes) {
+    if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+// Backup filenames look like songs-20260711-101530-manual.db (optionally
+// with a -2 uniquifier); surface the label part as the human-readable kind.
+function backupLabelFromName(name) {
+    const m = name.match(/^songs-\d{8}-\d{6}-(.+?)(?:-\d+)?\.db$/);
+    return m ? m[1] : '';
+}
+
+function refreshLibraryPanel() {
+    renderBackupList();
+    renderTrashList();
+}
+
+async function renderBackupList() {
+    try {
+        const res = await fetch(`${API_URL}/backups`, { cache: 'no-store' });
+        if (!res.ok) throw new Error('Failed');
+        const backups = await res.json();
+        const list = elements.backupList;
+        if (backups.length === 0) return libraryListEmpty(list, 'No backups yet');
+        list.textContent = '';
+        for (const b of backups) {
+            const li = document.createElement('li');
+            const main = document.createElement('span');
+            main.className = 'item-main';
+            main.textContent = new Date(b.created_at_ms).toLocaleString();
+            const meta = document.createElement('span');
+            meta.className = 'item-meta';
+            meta.textContent = `${backupLabelFromName(b.name)} · ${formatBytes(b.size_bytes)}`;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-secondary btn-small';
+            btn.textContent = 'Restore';
+            btn.addEventListener('click', () => confirmRestoreBackup(b));
+            li.append(main, meta, btn);
+            list.appendChild(li);
+        }
+    } catch (e) {
+        console.error('renderBackupList:', e);
+    }
+}
+
+async function backupNow() {
+    try {
+        elements.backupNowBtn.disabled = true;
+        const res = await fetch(`${API_URL}/backups`, { method: 'POST' });
+        if (!res.ok) throw new Error('Backup failed');
+        await renderBackupList();
+        updateStatus('Backup created');
+    } catch (e) {
+        console.error('backupNow:', e);
+        updateStatus('Failed to create backup');
+    } finally {
+        elements.backupNowBtn.disabled = false;
+    }
+}
+
+function confirmRestoreBackup(backup) {
+    // Swap modals — same stacking problem as the replace-library confirm.
+    closeSettingsModal();
+    openConfirm({
+        title: 'Restore Backup',
+        message: `Replace the current library with the backup from ${new Date(backup.created_at_ms).toLocaleString()}? The current library is backed up first, so this can be undone.`,
+        confirmLabel: 'Restore',
+        onConfirm: () => restoreBackup(backup.name),
+    });
+}
+
+async function restoreBackup(name) {
+    try {
+        const res = await fetch(`${API_URL}/backups/${encodeURIComponent(name)}/restore`, {
+            method: 'POST',
+        });
+        if (!res.ok) throw new Error(`Restore failed (${res.status})`);
+        // The whole library may have changed — reset anything pointing at it.
+        state.currentSong = null;
+        state.currentVerseIndex = 0;
+        renderSongDisplay();
+        await fetchSongs();
+        fetchCollections();
+        updateStatus('Backup restored');
+    } catch (e) {
+        console.error('restoreBackup:', e);
+        updateStatus('Failed to restore backup');
+    }
+}
+
+async function renderTrashList() {
+    try {
+        const res = await fetch(`${API_URL}/trash`, { cache: 'no-store' });
+        if (!res.ok) throw new Error('Failed');
+        const songs = await res.json();
+        const list = elements.trashList;
+        if (songs.length === 0) return libraryListEmpty(list, 'Nothing deleted recently');
+        list.textContent = '';
+        for (const song of songs) {
+            const li = document.createElement('li');
+            const main = document.createElement('span');
+            main.className = 'item-main';
+            main.textContent = song.author ? `${song.title} — ${song.author}` : song.title;
+            const meta = document.createElement('span');
+            meta.className = 'item-meta';
+            // deleted_at is SQLite UTC ("YYYY-MM-DD HH:MM:SS") — mark it so
+            // Date parses it correctly before rendering in local time.
+            meta.textContent = new Date(`${song.deleted_at.replace(' ', 'T')}Z`).toLocaleString();
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-secondary btn-small';
+            btn.textContent = 'Restore';
+            btn.addEventListener('click', () => restoreTrashedSong(song));
+            li.append(main, meta, btn);
+            list.appendChild(li);
+        }
+    } catch (e) {
+        console.error('renderTrashList:', e);
+    }
+}
+
+async function restoreTrashedSong(song) {
+    try {
+        const res = await fetch(`${API_URL}/songs/${song.id}/restore`, { method: 'POST' });
+        if (!res.ok) throw new Error('Failed to restore song');
+        await fetchSongs();
+        fetchCollections();
+        renderTrashList();
+        updateStatus(`Restored "${song.title}"`);
+    } catch (e) {
+        console.error('restoreTrashedSong:', e);
+        updateStatus('Failed to restore song');
+    }
+}
+
+async function scanDuplicates() {
+    try {
+        elements.scanDuplicatesBtn.disabled = true;
+        const res = await fetch(`${API_URL}/duplicates`, { cache: 'no-store' });
+        if (!res.ok) throw new Error('Failed');
+        const groups = await res.json();
+        const list = elements.duplicateList;
+        if (groups.length === 0) return libraryListEmpty(list, 'No duplicates found');
+        list.textContent = '';
+        for (const group of groups) {
+            const header = document.createElement('li');
+            header.className = 'group-header';
+            header.textContent = `${group.title} (${group.songs.length} copies)`;
+            list.appendChild(header);
+
+            const hashCounts = {};
+            for (const s of group.songs) {
+                hashCounts[s.content_hash] = (hashCounts[s.content_hash] || 0) + 1;
+            }
+
+            for (const song of group.songs) {
+                const li = document.createElement('li');
+                const main = document.createElement('span');
+                main.className = 'item-main';
+                main.textContent = song.title;
+                const meta = document.createElement('span');
+                meta.className = 'item-meta';
+                meta.textContent = [
+                    song.author,
+                    song.song_number ? `#${song.song_number}` : null,
+                    `${song.verse_count} verse${song.verse_count !== 1 ? 's' : ''}`,
+                ].filter(Boolean).join(' · ');
+                li.append(main, meta);
+                if (hashCounts[song.content_hash] > 1) {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge-identical';
+                    badge.textContent = 'identical lyrics';
+                    li.appendChild(badge);
+                }
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn btn-danger btn-small';
+                btn.textContent = 'Delete';
+                btn.addEventListener('click', () => deleteDuplicate(song));
+                li.appendChild(btn);
+                list.appendChild(li);
+            }
+        }
+    } catch (e) {
+        console.error('scanDuplicates:', e);
+    } finally {
+        elements.scanDuplicatesBtn.disabled = false;
+    }
+}
+
+async function deleteDuplicate(song) {
+    try {
+        const res = await fetch(`${API_URL}/songs/${song.id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete song');
+        if (state.currentSong?.id === song.id) {
+            state.currentSong = null;
+            state.currentVerseIndex = 0;
+            renderSongDisplay();
+        }
+        await fetchSongs();
+        fetchCollections();
+        scanDuplicates();
+        renderTrashList();
+        updateStatus(`Moved "${song.title}" to Recently Deleted`, {
+            label: 'Undo',
+            onClick: () => undoDelete(song.id, song.title),
+        });
+    } catch (e) {
+        console.error('deleteDuplicate:', e);
+        updateStatus('Failed to delete song');
+    }
+}
+
+
 function initSettingsDialog() {
     elements.settingsBtn.addEventListener('click', openSettingsModal);
     elements.closeSettingsModal.addEventListener('click', closeSettingsModal);
@@ -1585,8 +1916,14 @@ function initSettingsDialog() {
             document.querySelectorAll('.settings-panel').forEach(p => p.classList.remove('active'));
             tab.classList.add('active');
             document.querySelector(`.settings-panel[data-panel="${tab.dataset.tab}"]`).classList.add('active');
+            const isLibrary = tab.dataset.tab === 'library';
+            document.querySelector('.settings-body').classList.toggle('library-mode', isLibrary);
+            if (isLibrary) refreshLibraryPanel();
         });
     });
+
+    elements.backupNowBtn.addEventListener('click', backupNow);
+    elements.scanDuplicatesBtn.addEventListener('click', scanDuplicates);
 
     elements.setFontFamily.addEventListener('change', () => {
         state.settings.typography.fontFamily = elements.setFontFamily.value;
@@ -1833,7 +2170,11 @@ function initEventListeners() {
     });
 
     elements.cancelDeleteBtn.addEventListener('click', closeDeleteConfirm);
-    elements.confirmDeleteBtn.addEventListener('click', deleteSong);
+    elements.confirmDeleteBtn.addEventListener('click', () => {
+        const action = confirmHandler;
+        closeDeleteConfirm();
+        if (action) action();
+    });
     elements.confirmModal.addEventListener('click', (e) => {
         if (e.target === elements.confirmModal) closeDeleteConfirm();
     });
