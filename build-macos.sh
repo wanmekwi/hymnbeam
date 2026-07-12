@@ -27,7 +27,15 @@ for arch in aarch64-apple-darwin x86_64-apple-darwin; do
 done
 
 echo "==> Building universal bundle (this takes a few minutes)"
-cargo tauri build --target "$TARGET"
+# When an updater signing key is present (CI with TAURI_SIGNING_PRIVATE_KEY set),
+# also emit the signed updater artifact (*.app.tar.gz + .sig). Off by default so
+# local and unsigned builds are completely unaffected.
+BUILD_ARGS=(--target "$TARGET")
+if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  echo "    (signing key present — emitting updater artifacts)"
+  BUILD_ARGS+=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
+fi
+cargo tauri build "${BUILD_ARGS[@]}"
 
 APP_PATH="$(find "$APP_DIR" -maxdepth 1 -name '*.app' -print -quit)"
 if [[ -z "${APP_PATH:-}" ]]; then
