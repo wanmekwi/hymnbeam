@@ -15,9 +15,10 @@ the tag-driven release CI all matter here.
 These are committed and safe — they do nothing until you complete the activation
 steps below:
 
-- `tauri-plugin-updater` and `tauri-plugin-opener` are dependencies
-  (`src-tauri/Cargo.toml`), both registered in `src-tauri/src/main.rs`.
-- `updater:default` and `opener:default` are granted in
+- `tauri-plugin-updater`, `tauri-plugin-opener` and `tauri-plugin-process` are
+  dependencies (`src-tauri/Cargo.toml`), all registered in
+  `src-tauri/src/main.rs`.
+- `updater:default`, `opener:default` and `process:default` are granted in
   `src-tauri/capabilities/default.json`.
 - `src-tauri/tauri.conf.json` has a `plugins.updater` block with the GitHub
   "latest release" endpoint and an **empty `pubkey`**. The empty pubkey is the
@@ -27,8 +28,23 @@ steps below:
   at startup — keep the block, just fill in the pubkey.)
 - The frontend (`frontend/js/app.js`, `checkForUpdates` / `tryPluginAutoUpdate`)
   already prefers the plugin when it works and falls back otherwise. **No
-  frontend changes are needed to activate** — filling in the pubkey + CI is
-  enough.
+  frontend changes are needed to activate.**
+- **CI is done and dormant (Option B, gated).** `.github/workflows/release.yml`
+  and `build-macos.sh` sign updater artifacts and publish `latest.json`, but
+  every updater step is guarded on the `TAURI_SIGNING_PRIVATE_KEY` secret. With
+  the secret unset the release builds exactly as before; setting it turns the
+  whole path on. `createUpdaterArtifacts` is injected by CI when signing (not
+  hard-coded in config), so there is no build-break trap.
+- **Post-update relaunch is wired** — `tauri-plugin-process` is registered, so
+  `tryPluginAutoUpdate()`'s `process.relaunch()` works once the updater is live
+  (step 5 below is already done).
+
+## What's left to activate (all yours)
+
+Only three things remain, and all involve the signing key, which must never pass
+through anyone else: **(1)** generate the key (step 1), **(2)** add the two CI
+secrets (step 2), **(3)** paste the public key into `tauri.conf.json` (step 3).
+Steps 4 and 5 are already implemented.
 
 ## Activation steps
 
@@ -53,14 +69,10 @@ In the GitHub repo → Settings → Secrets and variables → Actions, add:
 
 ### 3. Put the public key in the config
 
-In `src-tauri/tauri.conf.json`, replace the empty pubkey and turn on updater
-artifact generation:
+In `src-tauri/tauri.conf.json`, replace the empty pubkey with the public key
+step 1 printed:
 
-```jsonc
-"bundle": {
-  "createUpdaterArtifacts": true,   // add this line
-  ...
-},
+```json
 "plugins": {
   "updater": {
     "endpoints": [
@@ -71,78 +83,42 @@ artifact generation:
 }
 ```
 
-`createUpdaterArtifacts` MUST stay off until the signing secret exists — with it
-on and no key, the build fails. So this config change and the CI change (next)
-land together with the secret already in place.
+That is the **only** config change needed. `createUpdaterArtifacts` is *not* set
+here — CI injects it via `--config` only when the signing secret is present (see
+step 4), so there is no build that fails for lack of a key. The pubkey is public;
+committing it is safe. This is the change that flips auto-update on for the *next*
+build, so it belongs in the release commit where you also confirm steps 1–2 are
+done.
 
-### 4. Produce and publish `latest.json` in CI
+### 4. Produce and publish `latest.json` in CI — DONE
 
-The release workflow (`.github/workflows/release.yml`) uses custom build steps
-(`build-macos.sh`, `cargo tauri build --bundles nsis`) rather than
-`tauri-action`, so updater artifacts and the `latest.json` manifest are not
-generated automatically. Two options:
+Implemented as **Option B** (kept the custom scripts; `tauri-action` was rejected
+because it wouldn't reproduce `build-macos.sh`'s ad-hoc-sign + signed-DMG swap).
+Live in `.github/workflows/release.yml` + `build-macos.sh`:
 
-**Option A (recommended): switch the build steps to `tauri-apps/tauri-action`.**
-It builds, signs the updater artifacts, generates `latest.json`, and attaches
-everything to the release in one step. Pass the signing env vars:
+- Both build jobs carry the `TAURI_SIGNING_*` env from repo secrets. When the key
+  is set, `build-macos.sh` and the NSIS step add
+  `--config '{"bundle":{"createUpdaterArtifacts":true}}'`, producing a signed
+  `*.app.tar.gz` (macOS) / reusing `*-setup.exe` (Windows) plus a `.sig` each.
+- The macOS `*.app.tar.gz` is uploaded to the release; each `.sig` is stashed as
+  a workflow artifact.
+- `publish-release-notes` assembles `latest.json` with `jq` (signatures inlined,
+  download URLs resolved from the release's own assets) and uploads it.
+- **Every updater step is guarded on `env.TAURI_SIGNING_PRIVATE_KEY != ''`.** No
+  secret ⇒ no updater artifacts, `latest.json` assembly self-skips, release is
+  identical to today. Nothing to break by merging this ahead of the key.
 
-```yaml
-env:
-  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-```
+To smoke-test after adding the secrets, run the workflow via `workflow_dispatch`
+(it builds without tagging a release).
 
-Confirm the universal-macOS build (currently `build-macos.sh`) is reproduced with
-tauri-action's `args: --target universal-apple-darwin`.
+### 5. Auto-relaunch after install — DONE
 
-**Option B: keep the custom scripts, assemble `latest.json` manually.** With
-`createUpdaterArtifacts: true`, the builds additionally emit a signed archive per
-platform plus a `.sig` file:
-- macOS: `*.app.tar.gz` + `*.app.tar.gz.sig`
-- Windows NSIS: `*-setup.exe` + `*-setup.exe.sig` (env vars must be set on the
-  build step so the `.sig` is produced)
-
-Add a step (after both builds, in `publish-release-notes` or a new job) that
-reads the two `.sig` files and writes `latest.json`, then uploads it to the
-release:
-
-```json
-{
-  "version": "0.2.0",
-  "notes": "See the release page for details.",
-  "pub_date": "2026-08-01T00:00:00Z",
-  "platforms": {
-    "darwin-aarch64": { "signature": "<contents of .app.tar.gz.sig>", "url": "https://github.com/wanmekwi/hymnbeam/releases/download/v0.2.0/HymnBeam_0.2.0_universal.app.tar.gz" },
-    "darwin-x86_64":  { "signature": "<same universal sig>",          "url": "<same universal url>" },
-    "windows-x86_64": { "signature": "<contents of -setup.exe.sig>",  "url": "https://github.com/wanmekwi/hymnbeam/releases/download/v0.2.0/HymnBeam_0.2.0_x64-setup.exe" }
-  }
-}
-```
-
-Upload the updater archives (`*.app.tar.gz`, and for Windows the `-setup.exe` is
-reused) and `latest.json` to the release alongside the existing DMG/EXE.
-
-### 5. Auto-relaunch after install (optional polish)
-
-After `downloadAndInstall()`, the frontend tries `window.__TAURI__.process.relaunch()`.
-That global only exists if the **process plugin** is added:
-
-```toml
-# Cargo.toml
-tauri-plugin-process = "2"
-```
-```rust
-// main.rs
-.plugin(tauri_plugin_process::init())
-```
-```json
-// capabilities/default.json → permissions
-"core:default"  // process:default is covered by core:default in v2; verify
-```
-
-Without it, the frontend shows "Update installed — please restart HymnBeam."
-On Windows the NSIS installer exits and relaunches the app itself, so this
-mostly matters for macOS.
+`tauri-plugin-process` is a dependency, registered in `main.rs`, with
+`process:default` granted in `capabilities/default.json`. So after
+`downloadAndInstall()` the frontend's `window.__TAURI__.process.relaunch()`
+works once the updater is live. (Without it the frontend would show "Update
+installed — please restart HymnBeam.") On Windows the NSIS installer exits and
+relaunches the app itself, so relaunch mostly matters for macOS.
 
 ## Important caveats
 
