@@ -431,6 +431,12 @@ pub fn find_duplicates() -> Result<Vec<DuplicateGroup>, String> {
 // go via FK cascade; setlists themselves survive (emptied, not deleted). The
 // FTS indexes use the 'delete-all' command because they are external-content
 // tables — row-by-row DELETEs need the content rows to still be present.
+//
+// The AUTOINCREMENT counters are reset too: without this, a DELETE leaves
+// sqlite_sequence at the old maximum, so a replaced library's ids keep climbing
+// (e.g. 5293, 5294…). Since songs with no explicit number display their id as a
+// fallback number, that made a fresh import show large, wrong numbers. Reset so
+// a replaced library numbers cleanly from 1.
 pub fn clear_all_songs() -> Result<(), String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
 
@@ -440,6 +446,7 @@ pub fn clear_all_songs() -> Result<(), String> {
         INSERT INTO verses_fts(verses_fts) VALUES('delete-all');
         DELETE FROM songs;
         DELETE FROM tags;
+        DELETE FROM sqlite_sequence WHERE name IN ('songs', 'verses', 'tags');
         "#,
     )
     .map_err(|e| e.to_string())
@@ -469,6 +476,24 @@ mod tests {
                 .collect(),
             tags: Vec::new(),
         }
+    }
+
+    #[test]
+    fn clear_all_songs_resets_id_counter() {
+        let _db = setup_temp_db();
+
+        // Seed several songs so the auto-increment counter climbs…
+        for i in 0..5 {
+            create_song(&make_song(&format!("Song {}", i), None, &["line"])).unwrap();
+        }
+        let last = create_song(&make_song("Last", None, &["line"])).unwrap();
+        assert!(last >= 6);
+
+        // …then a full wipe (as replace-library does) must restart ids at 1,
+        // so numberless songs display 1, 2, 3… rather than continuing to climb.
+        clear_all_songs().unwrap();
+        let fresh = create_song(&make_song("Fresh Start", None, &["line"])).unwrap();
+        assert_eq!(fresh, 1);
     }
 
     #[test]

@@ -26,6 +26,9 @@ progress.md
 .vscode/
 *.swp
 
+# Claude Code local tooling
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

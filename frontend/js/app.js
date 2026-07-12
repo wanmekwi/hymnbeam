@@ -20,6 +20,7 @@ const state = {
     navigationOrder: [],
     navPosition: 0,
     isBlank: false,
+    showLogo: false,
     projectorOpen: false,
     editingVerse: [],
     editingSongId: null,
@@ -41,7 +42,8 @@ const DEFAULT_SETTINGS = {
         image: { filename: null, dim: 0.4 }
     },
     layout: { showTitleBar: true, showMetaBar: true, showVerseLabel: false, autoBreakLines: true, safeAreaPct: 5 },
-    transition: { style: 'fade-up', durationMs: 400 }
+    transition: { style: 'fade-up', durationMs: 400 },
+    logo: { image: null }
 };
 
 const FONT_STACKS = {
@@ -89,9 +91,23 @@ const elements = {
     lyricsScroll: document.getElementById('lyricsScroll'),
     previewFrame: document.getElementById('previewFrame'),
     previewWindow: document.getElementById('previewWindow'),
+    nextPreviewFrame: document.getElementById('nextPreviewFrame'),
+    nextPreviewWindow: document.getElementById('nextPreviewWindow'),
+    nextPreviewEmpty: document.getElementById('nextPreviewEmpty'),
+    previewContainer: document.getElementById('previewContainer'),
+    previewLayoutToggle: document.getElementById('previewLayoutToggle'),
     importBtn: document.getElementById('importBtn'),
     projectorBtn: document.getElementById('projectorBtn'),
+    alertBtn: document.getElementById('alertBtn'),
+    alertPopover: document.getElementById('alertPopover'),
+    alertInput: document.getElementById('alertInput'),
+    alertRecents: document.getElementById('alertRecents'),
+    alertAutoClear: document.getElementById('alertAutoClear'),
+    alertShowBtn: document.getElementById('alertShowBtn'),
+    alertClearBtn: document.getElementById('alertClearBtn'),
+    alertLiveDot: document.getElementById('alertLiveDot'),
     blankBtn: document.getElementById('blankBtn'),
+    logoBtn: document.getElementById('logoBtn'),
     importModal: document.getElementById('importModal'),
     closeModal: document.getElementById('closeModal'),
     dropZone: document.getElementById('dropZone'),
@@ -129,6 +145,9 @@ const elements = {
     aboutModal: document.getElementById('aboutModal'),
     closeAboutModal: document.getElementById('closeAboutModal'),
     aboutVersion: document.getElementById('aboutVersion'),
+    checkUpdateBtn: document.getElementById('checkUpdateBtn'),
+    updateStatus: document.getElementById('updateStatus'),
+    updateAction: document.getElementById('updateAction'),
     settingsBtn: document.getElementById('settingsBtn'),
     settingsModal: document.getElementById('settingsModal'),
     closeSettingsModal: document.getElementById('closeSettingsModal'),
@@ -151,6 +170,10 @@ const elements = {
     setBgImageBrowseBtn: document.getElementById('setBgImageBrowseBtn'),
     setBgImageRemoveBtn: document.getElementById('setBgImageRemoveBtn'),
     setBgImageInput: document.getElementById('setBgImageInput'),
+    setLogoImageThumb: document.getElementById('setLogoImageThumb'),
+    setLogoImageBrowseBtn: document.getElementById('setLogoImageBrowseBtn'),
+    setLogoImageRemoveBtn: document.getElementById('setLogoImageRemoveBtn'),
+    setLogoImageInput: document.getElementById('setLogoImageInput'),
     setBgImageDim: document.getElementById('setBgImageDim'),
     setBgImageDimValue: document.getElementById('setBgImageDimValue'),
     setShowTitleBar: document.getElementById('setShowTitleBar'),
@@ -166,6 +189,7 @@ const elements = {
     settingsPreviewText: document.querySelector('.settings-preview-text'),
     collectionEmptyState: document.getElementById('collectionEmptyState'),
     collectionSongsEmptyState: document.getElementById('collectionSongsEmptyState'),
+    collectionBibleInput: document.getElementById('collectionBibleInput'),
 };
 
 
@@ -539,21 +563,67 @@ function buildProjectorPayload() {
     };
 }
 
+// Payload for the slide the *next* advance will project — i.e. the verse at
+// navPosition + 1 in the navigation order. Returns null at the end of the song
+// (nothing queued) or when no song is loaded. Blanking the live screen doesn't
+// change what's queued, so isBlank is ignored here.
+function buildNextPreviewPayload() {
+    if (!state.currentSong) return null;
+    const nextNavPos = state.navPosition + 1;
+    if (nextNavPos >= state.navigationOrder.length) return null;
+    const idx = state.navigationOrder[nextNavPos];
+    const verse = state.currentSong.verses[idx];
+    if (!verse) return null;
+    return {
+        text: verse.text || '',
+        label: verse.label || '',
+        isBlank: false,
+        title: state.currentSong.title,
+        author: state.currentSong.author,
+        musical_key: state.currentSong.musical_key,
+        songId: state.currentSong.id,
+        songNumber: state.currentSong.song_number || null,
+        verses: state.currentSong.verses.map(v => v.text),
+        hasPrev: true,
+        hasNext: nextNavPos < state.navigationOrder.length - 1
+    };
+}
+
+const BLANK_PREVIEW_MSG = { type: 'update-lyrics', text: '', label: '', isBlank: true,
+    verses: [], hasPrev: false, hasNext: false };
+
+// Sync the "Next" preview iframe with what the next advance will show. Shows an
+// "End of song" placeholder when nothing is queued, and nothing when no song is
+// loaded.
+function updateNextPreview() {
+    const frame = elements.nextPreviewFrame;
+    const empty = elements.nextPreviewEmpty;
+    if (!frame || !frame.contentWindow) return;
+    const payload = buildNextPreviewPayload();
+    if (!payload) {
+        const atEnd = !!state.currentSong;
+        empty.textContent = atEnd ? 'End of song' : '';
+        empty.classList.toggle('visible', atEnd);
+        frame.contentWindow.postMessage(BLANK_PREVIEW_MSG, '*');
+        return;
+    }
+    empty.classList.remove('visible');
+    frame.contentWindow.postMessage({ type: 'update-lyrics', ...payload }, '*');
+}
+
 // Sync the preview iframe. Always safe to call — no-op if the iframe isn't
 // loaded yet or there's no current song. `updatePreview()` accepts an
 // optional text arg for callers that still pass one; the arg is ignored
-// because the iframe pulls everything from buildProjectorPayload().
+// because the iframe pulls everything from buildProjectorPayload(). The single
+// choke point for both preview panes, so the Next pane updates in lockstep.
 function updatePreview(_text) {
     const frame = elements.previewFrame;
-    if (!frame || !frame.contentWindow) return;
-    const payload = buildProjectorPayload();
-    if (!payload) {
+    if (frame && frame.contentWindow) {
+        const payload = buildProjectorPayload();
         frame.contentWindow.postMessage(
-            { type: 'update-lyrics', text: '', label: '', isBlank: true,
-              verses: [], hasPrev: false, hasNext: false }, '*');
-        return;
+            payload ? { type: 'update-lyrics', ...payload } : BLANK_PREVIEW_MSG, '*');
     }
-    frame.contentWindow.postMessage({ type: 'update-lyrics', ...payload }, '*');
+    updateNextPreview();
 }
 
 async function sendToProjector() {
@@ -606,6 +676,8 @@ async function toggleProjector() {
                 setTimeout(() => {
                     sendToProjector();
                     pushSettingsToProjector();
+                    sendLogoState();
+                    resendAlertState();
                 }, 500);
             }
         } else {
@@ -624,9 +696,155 @@ async function toggleProjector() {
 
 function toggleBlank() {
     state.isBlank = !state.isBlank;
-    elements.blankBtn.classList.toggle('active', state.isBlank);
+    // Blank and logo are mutually exclusive projector states.
+    if (state.isBlank && state.showLogo) state.showLogo = false;
+    syncScreenStateButtons();
     updatePreview(state.currentSong?.verses[state.currentVerseIndex]?.text || '');
     sendToProjector();
+    sendLogoState();
+}
+
+function toggleLogo() {
+    state.showLogo = !state.showLogo;
+    if (state.showLogo && state.isBlank) state.isBlank = false;
+    syncScreenStateButtons();
+    updatePreview();
+    sendToProjector();
+    sendLogoState();
+}
+
+function syncScreenStateButtons() {
+    elements.blankBtn.classList.toggle('active', state.isBlank);
+    elements.logoBtn.classList.toggle('active', state.showLogo);
+}
+
+// Logo is an independent overlay, sent on its own channel so it works with no
+// song loaded (pre-service). Mirrors sendToProjector's live-preview + projector
+// + browser-fallback fan-out, but only to the live preview (the Next pane keeps
+// showing the queued verse).
+function sendLogoState() {
+    const image = state.settings?.logo?.image || null;
+    const msg = { type: 'show-logo', show: state.showLogo, image };
+    if (elements.previewFrame?.contentWindow) {
+        elements.previewFrame.contentWindow.postMessage(msg, '*');
+    }
+    if (window.__TAURI__) {
+        if (state.projectorOpen) {
+            window.__TAURI__.core.invoke('send_to_projector', {
+                event: 'show-logo',
+                payload: JSON.stringify({ show: state.showLogo, image })
+            }).catch(err => console.error('Failed to send logo state:', err));
+        }
+    } else if (window.projectorWindow) {
+        window.projectorWindow.postMessage(msg, '*');
+    }
+}
+
+
+// ----- Projector alert banner -----
+
+const ALERT_RECENTS_KEY = 'hymnbeam.alertRecents';
+let alertActive = false;
+let alertTimer = null;
+let currentAlertText = '';
+
+// Re-assert the current alert to a freshly-opened projector / preview so it
+// isn't lost when a window opens after the alert was raised.
+function resendAlertState() {
+    if (alertActive && currentAlertText) {
+        sendAlert('show-alert', { text: currentAlertText });
+    }
+}
+
+// Fan an alert event out to the live preview + real projector + browser
+// fallback (same channels as the lyrics/logo transports).
+function sendAlert(event, payload) {
+    const msg = { type: event, ...payload };
+    if (elements.previewFrame?.contentWindow) {
+        elements.previewFrame.contentWindow.postMessage(msg, '*');
+    }
+    if (window.__TAURI__) {
+        if (state.projectorOpen) {
+            window.__TAURI__.core.invoke('send_to_projector', {
+                event, payload: JSON.stringify(payload)
+            }).catch(err => console.error('Failed to send alert:', err));
+        }
+    } else if (window.projectorWindow) {
+        window.projectorWindow.postMessage(msg, '*');
+    }
+}
+
+function updateAlertIndicator() {
+    elements.alertBtn.classList.toggle('active', alertActive);
+    elements.alertLiveDot.classList.toggle('visible', alertActive);
+}
+
+function showAlert() {
+    const text = elements.alertInput.value.trim();
+    if (!text) {
+        elements.alertInput.focus();
+        return;
+    }
+    clearTimeout(alertTimer);
+    alertActive = true;
+    currentAlertText = text;
+    updateAlertIndicator();
+    sendAlert('show-alert', { text });
+    saveAlertRecent(text);
+
+    // The operator owns the auto-clear timer so its "live" indicator stays
+    // authoritative; when it fires it sends clear-alert to the projector.
+    const seconds = parseInt(elements.alertAutoClear.value, 10) || 0;
+    if (seconds > 0) {
+        alertTimer = setTimeout(() => clearAlert(), seconds * 1000);
+    }
+    closeAlertPopover();
+}
+
+function clearAlert() {
+    clearTimeout(alertTimer);
+    alertTimer = null;
+    if (!alertActive) return;
+    alertActive = false;
+    currentAlertText = '';
+    updateAlertIndicator();
+    sendAlert('clear-alert', {});
+}
+
+function toggleAlertPopover() {
+    const open = elements.alertPopover.classList.toggle('open');
+    if (open) {
+        renderAlertRecents();
+        elements.alertInput.focus();
+    }
+}
+
+function closeAlertPopover() {
+    elements.alertPopover.classList.remove('open');
+}
+
+function loadAlertRecents() {
+    try {
+        const raw = localStorage.getItem(ALERT_RECENTS_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) ? arr.filter(s => typeof s === 'string') : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveAlertRecent(text) {
+    // Most-recent-first, de-duplicated, capped at 6. Nursery alerts repeat.
+    const recents = [text, ...loadAlertRecents().filter(t => t !== text)].slice(0, 6);
+    try { localStorage.setItem(ALERT_RECENTS_KEY, JSON.stringify(recents)); }
+    catch (e) { /* storage full/blocked — non-fatal */ }
+    renderAlertRecents();
+}
+
+function renderAlertRecents() {
+    const recents = loadAlertRecents();
+    elements.alertRecents.innerHTML = recents
+        .map(t => `<option value="${t.replace(/"/g, '&quot;')}"></option>`).join('');
 }
 
 
@@ -1114,12 +1332,140 @@ async function openAboutModal() {
         }
     }
     elements.aboutVersion.textContent = version ? `Version ${version}` : '';
+    // Reset the update panel each time the modal opens.
+    elements.updateStatus.textContent = '';
+    elements.updateStatus.classList.remove('update-available');
+    elements.updateAction.innerHTML = '';
     elements.aboutModal.classList.add('active');
 }
 
 
 function closeAboutModal() {
     elements.aboutModal.classList.remove('active');
+}
+
+
+// ----- App updates -----
+
+const UPDATE_REPO = 'wanmekwi/hymnbeam';
+
+function parseVersionParts(v) {
+    return String(v || '').replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+}
+
+// True when `latest` is a strictly higher version than `current` (x.y.z).
+function isNewerVersion(latest, current) {
+    const a = parseVersionParts(latest);
+    const b = parseVersionParts(current);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+        const x = a[i] || 0, y = b[i] || 0;
+        if (x !== y) return x > y;
+    }
+    return false;
+}
+
+async function getCurrentVersion() {
+    if (window.__TAURI__) {
+        try { return await window.__TAURI__.core.invoke('get_app_version'); }
+        catch (e) { console.warn('Could not get app version:', e); }
+    }
+    return '';
+}
+
+async function openExternalUrl(url) {
+    if (window.__TAURI__) {
+        try { await window.__TAURI__.core.invoke('open_external', { url }); return; }
+        catch (e) { console.warn('open_external failed, falling back to window.open:', e); }
+    }
+    window.open(url, '_blank', 'noopener');
+}
+
+// Attempts a true in-place update via the Tauri updater plugin. Returns true
+// only if it actually performed the update. When the plugin isn't present or
+// isn't configured (no endpoint/pubkey yet), it returns false so the caller
+// falls back to opening the release download. See
+// docs/plans/auto-update-setup.md for how to activate real auto-update.
+async function tryPluginAutoUpdate() {
+    const updater = window.__TAURI__ && window.__TAURI__.updater;
+    if (!updater || typeof updater.check !== 'function') return false;
+    let update;
+    try {
+        update = await updater.check();
+    } catch (e) {
+        console.warn('Updater not configured, using download fallback:', e);
+        return false;
+    }
+    if (!update || !update.available) return false;
+
+    elements.updateStatus.textContent = `Downloading version ${update.version}…`;
+    await update.downloadAndInstall();
+    // Relaunch if the process plugin is available; otherwise ask the user to.
+    const proc = window.__TAURI__.process;
+    if (proc && typeof proc.relaunch === 'function') {
+        await proc.relaunch();
+    } else {
+        elements.updateStatus.textContent = 'Update installed — please restart HymnBeam.';
+    }
+    return true;
+}
+
+let updateCheckInFlight = false;
+
+async function checkForUpdates() {
+    if (updateCheckInFlight) return;
+    updateCheckInFlight = true;
+    elements.checkUpdateBtn.disabled = true;
+    elements.updateStatus.classList.remove('update-available');
+    elements.updateAction.innerHTML = '';
+    elements.updateStatus.textContent = 'Checking for updates…';
+
+    try {
+        const current = await getCurrentVersion();
+        let rel;
+        try {
+            const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+                headers: { 'Accept': 'application/vnd.github+json' }
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            rel = await res.json();
+        } catch (e) {
+            console.error('Update check failed:', e);
+            elements.updateStatus.textContent = 'Could not check for updates — check your connection.';
+            return;
+        }
+
+        const latest = (rel.tag_name || '').replace(/^v/, '');
+        if (!latest || !current || !isNewerVersion(latest, current)) {
+            elements.updateStatus.textContent = current
+                ? `You're up to date (version ${current}).`
+                : 'You\'re on the latest version.';
+            return;
+        }
+
+        elements.updateStatus.textContent = `Version ${latest} is available — you have ${current}.`;
+        elements.updateStatus.classList.add('update-available');
+
+        const isWin = (navigator.userAgent || '').toLowerCase().includes('windows');
+        const assets = rel.assets || [];
+        const asset = assets.find(a => isWin ? a.name.endsWith('.exe') : a.name.endsWith('.dmg'));
+        const downloadUrl = asset ? asset.browser_download_url : rel.html_url;
+
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-primary btn-small';
+        btn.textContent = 'Download update';
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            // Prefer a true in-place update when the updater is configured;
+            // otherwise open the installer download in the browser.
+            if (await tryPluginAutoUpdate()) return;
+            await openExternalUrl(downloadUrl);
+            elements.updateStatus.textContent = `Opening the download for version ${latest} in your browser…`;
+        });
+        elements.updateAction.appendChild(btn);
+    } finally {
+        updateCheckInFlight = false;
+        elements.checkUpdateBtn.disabled = false;
+    }
 }
 
 
@@ -1397,12 +1743,17 @@ function renderCollectionDetail() {
         empty.style.display = 'none';
         container.innerHTML = songs.map((s, idx) => {
             const isActive = idx === state.collectionPosition;
+            const type = s.item_type || 'song';
+            const subtitle = type === 'song' ? (s.author || '')
+                           : type === 'bible' ? 'Bible passage'
+                           : 'Holding slide';
             return `
-                <div class="collection-song-item ${isActive ? 'active-song' : ''}" data-entry-id="${s.id}" data-song-id="${s.song_id}">
+                <div class="collection-song-item ${isActive ? 'active-song' : ''} entry-${type}" data-entry-id="${s.id}">
                     <span class="collection-song-pos">${idx + 1}</span>
+                    <span class="collection-entry-icon" title="${type}">${collectionEntryIcon(type)}</span>
                     <div class="collection-song-info">
                         <div class="collection-song-title">${escapeHtml(s.title)}</div>
-                        ${s.author ? `<div class="collection-song-author">${escapeHtml(s.author)}</div>` : ''}
+                        ${subtitle ? `<div class="collection-song-author">${escapeHtml(subtitle)}</div>` : ''}
                     </div>
                     <div class="collection-song-controls">
                         <button type="button" class="collection-song-btn up" data-entry-id="${s.id}" title="Move up" ${idx === 0 ? 'disabled' : ''}>
@@ -1432,13 +1783,161 @@ function renderCollectionDetail() {
 }
 
 
+function collectionEntryIcon(type) {
+    if (type === 'bible') {
+        return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 3h7a2 2 0 0 1 2 2v8H5a2 2 0 0 0-2 2V3z"/><path d="M8 6v4M6 8h4"/></svg>';
+    }
+    if (type === 'logo') {
+        return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="7" r="1.2"/><path d="M3 12l3-3 2.5 2.5L11 9l2 3"/></svg>';
+    }
+    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 3v8.5M6 3l7-1v8.5"/><circle cx="4.2" cy="11.5" r="1.8"/><circle cx="11.2" cy="10.5" r="1.8"/></svg>';
+}
+
+// Advance the projector to a collection entry, dispatching on its kind:
+// song → load lyrics; bible → project the passage; logo → holding slide.
+async function activateCollectionEntry(pos) {
+    const entry = state.openCollection?.songs[pos];
+    if (!entry) return;
+    state.collectionPosition = pos;
+    const type = entry.item_type || 'song';
+
+    if (type === 'logo') {
+        if (!state.showLogo) toggleLogo();
+    } else {
+        // Song / Bible reveal content, so any holding slide must come down.
+        if (state.showLogo) {
+            state.showLogo = false;
+            syncScreenStateButtons();
+            sendLogoState();
+        }
+        if (type === 'bible') {
+            await projectCollectionBible(entry.reference);
+        } else {
+            await loadSong(entry.song_id);
+        }
+    }
+    renderCollectionDetail();
+    scrollActiveCollectionSongIntoView();
+}
+
+// Resolve a Bible reference and project it (main preview + projector), reusing
+// the Bible module's parser and chapter fetch. Chapter-only refs project v1.
+async function projectCollectionBible(reference) {
+    if (typeof parseReference !== 'function' || typeof fetchBibleChapter !== 'function') {
+        updateStatus('Bible module not ready');
+        return;
+    }
+    const ref = parseReference(reference || '');
+    if (!ref) {
+        updateStatus(`Couldn't resolve "${reference}"`);
+        return;
+    }
+    const verse = ref.verse || 1;
+    try {
+        const verses = await fetchBibleChapter(ref.book.code, ref.chapter);
+        const row = verses.find(r => r.verse === verse);
+        if (!row) {
+            updateStatus(`Couldn't find ${reference}`);
+            return;
+        }
+        const payload = {
+            text: row.text,
+            label: `${ref.chapter}:${verse}`,
+            isBlank: false,
+            isBible: true,
+            title: `${ref.book.name} ${ref.chapter}:${verse}`,
+            author: null,
+            musical_key: null,
+            songId: `bible-${ref.book.code}-${ref.chapter}-${verse}`,
+            songNumber: null,
+            verses: verses.map(v => v.text),
+            hasPrev: false,
+            hasNext: false
+        };
+        const msg = { type: 'update-lyrics', ...payload };
+        if (elements.previewFrame?.contentWindow) {
+            elements.previewFrame.contentWindow.postMessage(msg, '*');
+        }
+        clearNextPreview();
+        if (window.__TAURI__) {
+            if (state.projectorOpen) {
+                window.__TAURI__.core.invoke('send_to_projector', {
+                    event: 'update-lyrics', payload: JSON.stringify(payload)
+                }).catch(e => console.error('bible project error:', e));
+            }
+        } else if (window.projectorWindow) {
+            window.projectorWindow.postMessage(msg, '*');
+        }
+    } catch (e) {
+        console.error('projectCollectionBible:', e);
+        updateStatus('Could not project passage');
+    }
+}
+
+// A bible/logo entry has no "next verse"; blank the Next pane so it doesn't
+// show the previously-loaded song's queue.
+function clearNextPreview() {
+    if (elements.nextPreviewFrame?.contentWindow) {
+        elements.nextPreviewFrame.contentWindow.postMessage(BLANK_PREVIEW_MSG, '*');
+    }
+    if (elements.nextPreviewEmpty) {
+        elements.nextPreviewEmpty.textContent = '';
+        elements.nextPreviewEmpty.classList.remove('visible');
+    }
+}
+
+async function addBibleToCollection() {
+    if (!state.openCollection) return;
+    const reference = elements.collectionBibleInput.value.trim();
+    if (!reference) return;
+    if (typeof parseReference === 'function' && !parseReference(reference)) {
+        updateStatus(`Couldn't resolve "${reference}"`);
+        return;
+    }
+    try {
+        const res = await fetch(`${API_URL}/collections/${state.openCollection.id}/songs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_type: 'bible', reference })
+        });
+        if (!res.ok) throw new Error(`Add failed (${res.status})`);
+        elements.collectionBibleInput.value = '';
+        closeCollectionAddMenu();
+        await openCollectionDetail(state.openCollection.id, { showView: false });
+    } catch (e) {
+        console.error('addBibleToCollection:', e);
+        updateStatus('Could not add passage');
+    }
+}
+
+async function addLogoToCollection() {
+    if (!state.openCollection) return;
+    try {
+        const res = await fetch(`${API_URL}/collections/${state.openCollection.id}/songs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_type: 'logo' })
+        });
+        if (!res.ok) throw new Error(`Add failed (${res.status})`);
+        closeCollectionAddMenu();
+        await openCollectionDetail(state.openCollection.id, { showView: false });
+    } catch (e) {
+        console.error('addLogoToCollection:', e);
+        updateStatus('Could not add logo slide');
+    }
+}
+
+function closeCollectionAddMenu() {
+    document.getElementById('collectionAddMenu').classList.remove('open');
+}
+
+
 async function navigateCollection(direction) {
     if (!state.openCollection) return;
-    const songs = state.openCollection.songs;
+    const items = state.openCollection.songs;
     const newPos = state.collectionPosition + direction;
-    if (newPos < 0 || newPos >= songs.length) return;
-    state.collectionPosition = newPos;
-    await loadSong(songs[newPos].song_id);
+    if (newPos < 0 || newPos >= items.length) return;
+    await activateCollectionEntry(newPos);
 }
 
 
@@ -1505,6 +2004,7 @@ function mergeSettings(saved) {
         }
         if (saved.layout) Object.assign(out.layout, saved.layout);
         if (saved.transition) Object.assign(out.transition, saved.transition);
+        if (saved.logo) Object.assign(out.logo, saved.logo);
     }
     return out;
 }
@@ -1541,10 +2041,11 @@ function scheduleSaveSettings() {
 }
 
 function pushSettingsToPreview() {
-    const frame = elements.previewFrame;
-    if (!frame || !frame.contentWindow || !state.settings) return;
-    frame.contentWindow.postMessage(
-        { type: 'apply-settings', settings: state.settings }, '*');
+    if (!state.settings) return;
+    const msg = { type: 'apply-settings', settings: state.settings };
+    for (const frame of [elements.previewFrame, elements.nextPreviewFrame]) {
+        if (frame && frame.contentWindow) frame.contentWindow.postMessage(msg, '*');
+    }
 }
 
 function pushSettingsToProjector() {
@@ -1599,6 +2100,7 @@ function syncSettingsForm() {
     elements.setBgGradAngle.value = s.background.gradient.angle;
     elements.setBgGradAngleValue.textContent = `${s.background.gradient.angle}°`;
     syncBgImageThumb();
+    syncLogoImageThumb();
     const dimPct = Math.round(s.background.image.dim * 100);
     elements.setBgImageDim.value = dimPct;
     elements.setBgImageDimValue.textContent = `${dimPct}%`;
@@ -1627,6 +2129,18 @@ function syncBgImageThumb() {
     } else {
         elements.setBgImageThumb.style.backgroundImage = '';
         elements.setBgImageThumb.innerHTML = '<span class="image-thumb-placeholder">No image</span>';
+    }
+}
+
+function syncLogoImageThumb() {
+    const fn = state.settings.logo && state.settings.logo.image;
+    if (fn) {
+        const url = `${API_URL}/backgrounds/${encodeURIComponent(fn)}`;
+        elements.setLogoImageThumb.style.backgroundImage = `url('${url}')`;
+        elements.setLogoImageThumb.innerHTML = '';
+    } else {
+        elements.setLogoImageThumb.style.backgroundImage = '';
+        elements.setLogoImageThumb.innerHTML = '<span class="image-thumb-placeholder">No image</span>';
     }
 }
 
@@ -1999,6 +2513,29 @@ function initSettingsDialog() {
         onSettingsChanged();
     });
 
+    elements.setLogoImageBrowseBtn.addEventListener('click', () => elements.setLogoImageInput.click());
+    elements.setLogoImageInput.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        try {
+            const filename = await uploadBackgroundImage(file);
+            state.settings.logo.image = filename;
+            syncLogoImageThumb();
+            onSettingsChanged();
+            sendLogoState();  // reflect the new image live if the logo is showing
+        } catch (err) {
+            console.error('Logo upload failed', err);
+            updateStatus('Image upload failed');
+        }
+    });
+    elements.setLogoImageRemoveBtn.addEventListener('click', () => {
+        state.settings.logo.image = null;
+        syncLogoImageThumb();
+        onSettingsChanged();
+        sendLogoState();
+    });
+
     // Layout
     const wireToggle = (el, path) => {
         el.addEventListener('change', () => {
@@ -2059,8 +2596,16 @@ function initMenuEvents() {
     });
     on('menu-toggle-projector', () => toggleProjector());
     on('menu-blank-screen', () => toggleBlank());
+    on('menu-toggle-logo', () => toggleLogo());
+    on('menu-check-update', () => {
+        openAboutModal();
+        checkForUpdates();
+    });
     on('projector-closed', () => {
         state.projectorOpen = false;
+        // The alert died with the projector window — reset the operator's
+        // "live" indicator so it doesn't falsely claim an alert is up.
+        clearAlert();
         elements.projectorBtn.innerHTML = `
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
                 <rect x="2" y="4" width="16" height="10" rx="1"/>
@@ -2118,6 +2663,7 @@ function initEventListeners() {
     });
 
     elements.aboutBtn.addEventListener('click', openAboutModal);
+    elements.checkUpdateBtn.addEventListener('click', checkForUpdates);
     elements.closeAboutModal.addEventListener('click', closeAboutModal);
     elements.aboutModal.addEventListener('click', (e) => {
         if (e.target === elements.aboutModal) closeAboutModal();
@@ -2142,6 +2688,18 @@ function initEventListeners() {
 
     elements.projectorBtn.addEventListener('click', toggleProjector);
     elements.blankBtn.addEventListener('click', toggleBlank);
+    elements.logoBtn.addEventListener('click', toggleLogo);
+
+    elements.alertBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleAlertPopover();
+    });
+    elements.alertShowBtn.addEventListener('click', showAlert);
+    elements.alertClearBtn.addEventListener('click', () => { clearAlert(); closeAlertPopover(); });
+    elements.alertInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); showAlert(); }
+    });
+    renderAlertRecents();
 
     elements.newSongBtn.addEventListener('click', () => openEditModal());
     elements.editSongBtn.addEventListener('click', () => {
@@ -2223,6 +2781,10 @@ function initEventListeners() {
             case 'F':
                 if (!state.projectorOpen) toggleProjector();
                 break;
+            case 'l':
+            case 'L':
+                toggleLogo();
+                break;
         }
     });
 
@@ -2267,6 +2829,16 @@ function initEventListeners() {
         await addToCollection(state.openCollection.id);
     });
 
+    document.getElementById('collectionAddBtn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.getElementById('collectionAddMenu').classList.toggle('open');
+    });
+    document.getElementById('collectionAddBibleBtn').addEventListener('click', addBibleToCollection);
+    elements.collectionBibleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); addBibleToCollection(); }
+    });
+    document.getElementById('collectionAddLogoBtn').addEventListener('click', addLogoToCollection);
+
     // Add to collection button
     document.getElementById('addToCollectionBtn').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2285,6 +2857,12 @@ function initEventListeners() {
         }
         if (!e.target.closest('#exportBtn') && !e.target.closest('#exportMenu')) {
             closeExportMenu();
+        }
+        if (!e.target.closest('.alert-wrapper')) {
+            closeAlertPopover();
+        }
+        if (!e.target.closest('.collection-add-wrapper')) {
+            closeCollectionAddMenu();
         }
     });
 
@@ -2309,11 +2887,9 @@ function initEventListeners() {
 
         const item = e.target.closest('.collection-song-item');
         if (!item || !state.openCollection) return;
-        const songId = parseInt(item.dataset.songId);
         const entryId = parseInt(item.dataset.entryId);
-        state.collectionPosition = state.openCollection.songs.findIndex(s => s.id === entryId);
-        loadSong(songId);
-        scrollActiveCollectionSongIntoView();
+        const pos = state.openCollection.songs.findIndex(s => s.id === entryId);
+        if (pos >= 0) activateCollectionEntry(pos);
     });
 
     document.getElementById('collectionPickerList').addEventListener('click', (e) => {
@@ -2334,6 +2910,8 @@ window.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'projector-ready') {
         pushSettingsToPreview();
         updatePreview();
+        sendLogoState();
+        resendAlertState();
     }
 });
 
@@ -2343,20 +2921,53 @@ window.addEventListener('message', (event) => {
 // whole rendered output via transform: scale to fit the preview window.
 const PREVIEW_VIRTUAL_W = 1920;
 function syncPreviewScale() {
-    const win = elements.previewWindow;
-    const frame = elements.previewFrame;
-    if (!win || !frame) return;
-    const w = win.clientWidth;
-    if (!w) return;
-    frame.style.setProperty('--preview-scale', w / PREVIEW_VIRTUAL_W);
+    const panes = [
+        [elements.previewWindow, elements.previewFrame],
+        [elements.nextPreviewWindow, elements.nextPreviewFrame]
+    ];
+    for (const [win, frame] of panes) {
+        if (!win || !frame) continue;
+        const w = win.clientWidth;
+        if (!w) continue;
+        frame.style.setProperty('--preview-scale', w / PREVIEW_VIRTUAL_W);
+    }
 }
 window.addEventListener('resize', syncPreviewScale);
+
+// Preview visibility: show or hide the "On screen now" / "Next" previews from
+// the main screen, remembered between sessions.
+const PREVIEW_HIDDEN_KEY = 'hymnbeam.previewHidden';
+const SVG_EYE = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="2"/></svg>';
+const SVG_EYE_OFF = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6.3 3.7A6.5 6.5 0 0 1 8 3.5c4.5 0 7 4.5 7 4.5a12 12 0 0 1-2 2.5M3.8 4.9A12 12 0 0 0 1 8s2.5 4.5 7 4.5a6.5 6.5 0 0 0 2.6-.5"/><path d="M2 2l12 12"/></svg>';
+
+function applyPreviewVisibility(hidden) {
+    elements.previewContainer.classList.toggle('collapsed', hidden);
+    // The icon reflects the current state; the tooltip names the action.
+    elements.previewLayoutToggle.innerHTML = hidden ? SVG_EYE_OFF : SVG_EYE;
+    elements.previewLayoutToggle.title = hidden ? 'Show previews' : 'Hide previews';
+    // Re-fit the iframes now they have width again (no-op while hidden).
+    if (!hidden) syncPreviewScale();
+}
+
+function togglePreviewVisibility() {
+    const hidden = !elements.previewContainer.classList.contains('collapsed');
+    try { localStorage.setItem(PREVIEW_HIDDEN_KEY, hidden ? '1' : '0'); } catch (e) { /* non-fatal */ }
+    applyPreviewVisibility(hidden);
+}
+
+function initPreviewLayout() {
+    let hidden = false;
+    try { hidden = localStorage.getItem(PREVIEW_HIDDEN_KEY) === '1'; } catch (e) { /* default */ }
+    applyPreviewVisibility(hidden);
+    elements.previewLayoutToggle.addEventListener('click', togglePreviewVisibility);
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
     initEventListeners();
     initBibleListeners();
     initSettingsDialog();
     initMenuEvents();
+    initPreviewLayout();
 
     // Set the preview scale once we have layout, and again on any size change.
     syncPreviewScale();

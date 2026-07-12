@@ -5,6 +5,8 @@
   "permissions": [
     "core:default",
     "shell:allow-open",
-    "axum:default"
+    "opener:default",
+    "axum:default",
+    "updater:default"
   ]
 }

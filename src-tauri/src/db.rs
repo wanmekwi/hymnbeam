@@ -36,23 +36,57 @@ pub fn get_connection() -> SqliteResult<std::sync::MutexGuard<'static, Connectio
     Ok(pool.lock().unwrap())
 }
 
+fn column_exists(conn: &Connection, table: &str, column: &str) -> SqliteResult<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let exists = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .any(|name| name == column);
+    Ok(exists)
+}
+
 fn add_column_if_missing(
     conn: &Connection,
     table: &str,
     column: &str,
     definition: &str,
 ) -> SqliteResult<()> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
-    let exists = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .filter_map(|r| r.ok())
-        .any(|name| name == column);
-    if !exists {
+    if !column_exists(conn, table, column)? {
         conn.execute(
             &format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, definition),
             [],
         )?;
     }
+    Ok(())
+}
+
+// Order-of-service migration: setlist entries used to be songs only. Rebuild
+// the table so an entry can also be a Bible passage or a logo slide — this
+// needs song_id to become nullable, which SQLite can't do with ALTER, so we
+// copy into a new table. Guarded on the item_type column so it runs once.
+// setlist_songs is referenced by nothing, so the rebuild is safe with FKs on.
+fn migrate_setlist_items(conn: &Connection) -> SqliteResult<()> {
+    if column_exists(conn, "setlist_songs", "item_type")? {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+        CREATE TABLE setlist_songs_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            setlist_id INTEGER NOT NULL,
+            song_id INTEGER,
+            item_type TEXT NOT NULL DEFAULT 'song',
+            reference TEXT,
+            position INTEGER NOT NULL,
+            FOREIGN KEY (setlist_id) REFERENCES setlists(id) ON DELETE CASCADE,
+            FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
+        );
+        INSERT INTO setlist_songs_new (id, setlist_id, song_id, item_type, position)
+            SELECT id, setlist_id, song_id, 'song', position FROM setlist_songs;
+        DROP TABLE setlist_songs;
+        ALTER TABLE setlist_songs_new RENAME TO setlist_songs;
+        "#,
+    )?;
     Ok(())
 }
 
@@ -129,6 +163,9 @@ pub fn init_db() -> SqliteResult<()> {
     // out of every read path until restored or purged.
     add_column_if_missing(&conn, "songs", "deleted_at", "TIMESTAMP")?;
 
+    // Order-of-service: setlist entries can be songs, Bible passages or logo slides.
+    migrate_setlist_items(&conn)?;
+
     conn.execute_batch(
         r#"
         CREATE VIRTUAL TABLE IF NOT EXISTS songs_fts USING fts5(
@@ -170,6 +207,69 @@ pub fn init_db() -> SqliteResult<()> {
 }
 
 #[cfg(test)]
+mod tests {
+    use super::test_util::setup_temp_db;
+    use super::{column_exists, get_connection, migrate_setlist_items};
+
+    #[test]
+    fn setlist_migration_upgrades_old_shape_and_preserves_rows() {
+        let _db = setup_temp_db();
+        let conn = get_connection().unwrap();
+
+        // Recreate the pre-migration table shape (song-only, song_id NOT NULL)
+        // with an existing entry, to simulate upgrading an older database.
+        conn.execute_batch(
+            r#"
+            DROP TABLE setlist_songs;
+            CREATE TABLE setlist_songs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setlist_id INTEGER NOT NULL,
+                song_id INTEGER NOT NULL,
+                position INTEGER NOT NULL,
+                FOREIGN KEY (setlist_id) REFERENCES setlists(id) ON DELETE CASCADE,
+                FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
+            );
+            INSERT INTO setlists (id, name) VALUES (1, 'Old Service');
+            INSERT INTO songs (id, title) VALUES (1, 'Old Song');
+            INSERT INTO setlist_songs (setlist_id, song_id, position) VALUES (1, 1, 1);
+            "#,
+        )
+        .unwrap();
+        assert!(!column_exists(&conn, "setlist_songs", "item_type").unwrap());
+
+        migrate_setlist_items(&conn).unwrap();
+
+        // The new columns exist and the existing row survived as a 'song' entry.
+        assert!(column_exists(&conn, "setlist_songs", "item_type").unwrap());
+        assert!(column_exists(&conn, "setlist_songs", "reference").unwrap());
+        let (item_type, song_id): (String, i64) = conn
+            .query_row(
+                "SELECT item_type, song_id FROM setlist_songs WHERE setlist_id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(item_type, "song");
+        assert_eq!(song_id, 1);
+
+        // song_id is now nullable, so bible/logo entries can be inserted.
+        conn.execute(
+            "INSERT INTO setlist_songs (setlist_id, song_id, item_type, reference, position)
+             VALUES (1, NULL, 'bible', 'John 3:16', 2)",
+            [],
+        )
+        .unwrap();
+
+        // Migration is idempotent — a second run is a no-op.
+        migrate_setlist_items(&conn).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM setlist_songs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 2);
+    }
+}
+
+#[cfg(test)]
 pub mod test_util {
     use std::sync::{Mutex, MutexGuard};
 
@@ -191,6 +291,15 @@ pub mod test_util {
         super::set_db_path(path);
         super::init_db().expect("init test db");
         crate::songs::clear_all_songs().expect("start from an empty library");
+        // The connection pool is a process-wide OnceCell, so a "fresh" path
+        // can't actually re-open the DB — every test shares one file. Reset the
+        // collection tables too (clear_all_songs only clears songs/tags) so
+        // tests stay isolated regardless of run order.
+        {
+            let conn = super::get_connection().expect("connection");
+            conn.execute_batch("DELETE FROM setlists;")
+                .expect("clear setlists");
+        }
         guard
     }
 }

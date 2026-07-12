@@ -3,6 +3,10 @@ const elements = {
     lyricsContainer: document.querySelector('.lyrics-container'),
     verseLabel: document.getElementById('verseLabel'),
     blankScreen: document.getElementById('blankScreen'),
+    logoScreen: document.getElementById('logoScreen'),
+    logoImage: document.getElementById('logoImage'),
+    alertBanner: document.getElementById('alertBanner'),
+    alertText: document.getElementById('alertText'),
     songTitleBar: document.getElementById('songTitleBar'),
     songMetaBar: document.getElementById('songMetaBar'),
     verseNavUp: document.getElementById('verseNavUp'),
@@ -263,6 +267,37 @@ function relayout(refreshDom = true) {
     }
 }
 
+// Logo / holding slide is an independent overlay layer, toggled by its own
+// event so it works even with no song loaded (pre-service). It shows the
+// centred logo image over the themed background, hiding lyrics/title/meta.
+function setLogoScreen(show, image) {
+    if (show) {
+        if (image && apiBase) {
+            elements.logoImage.src = `${apiBase}/backgrounds/${encodeURIComponent(image)}`;
+            elements.logoImage.style.display = '';
+        } else {
+            elements.logoImage.removeAttribute('src');
+            elements.logoImage.style.display = 'none';
+        }
+        elements.projector.classList.add('logo-active');
+        elements.logoScreen.classList.add('active');
+    } else {
+        elements.projector.classList.remove('logo-active');
+        elements.logoScreen.classList.remove('active');
+    }
+}
+
+// Alert banner: an announcement flashed over any state. Independent layer, so
+// it survives verse navigation and blank/logo changes until explicitly cleared.
+function setAlert(text) {
+    if (text) {
+        elements.alertText.textContent = text;
+        elements.alertBanner.classList.add('active');
+    } else {
+        elements.alertBanner.classList.remove('active');
+    }
+}
+
 function updateDisplay(data) {
     const { text, label, isBlank, title, author, musical_key, songId, songNumber, verses,
             hasPrev, hasNext, isBible } = data;
@@ -458,6 +493,15 @@ if (window.__TAURI__) {
         try { applySettings(JSON.parse(event.payload)); }
         catch (error) { console.error('Error parsing settings update:', error); }
     });
+    window.__TAURI__.event.listen('show-logo', (event) => {
+        try { const d = JSON.parse(event.payload); setLogoScreen(d.show, d.image); }
+        catch (error) { console.error('Error parsing logo update:', error); }
+    });
+    window.__TAURI__.event.listen('show-alert', (event) => {
+        try { const d = JSON.parse(event.payload); setAlert(d.text); }
+        catch (error) { console.error('Error parsing alert update:', error); }
+    });
+    window.__TAURI__.event.listen('clear-alert', () => setAlert(''));
 }
 window.addEventListener('message', (event) => {
     if (!event.data || typeof event.data !== 'object') return;
@@ -465,6 +509,12 @@ window.addEventListener('message', (event) => {
         updateDisplay(event.data);
     } else if (event.data.type === 'apply-settings') {
         applySettings(event.data.settings);
+    } else if (event.data.type === 'show-logo') {
+        setLogoScreen(event.data.show, event.data.image);
+    } else if (event.data.type === 'show-alert') {
+        setAlert(event.data.text);
+    } else if (event.data.type === 'clear-alert') {
+        setAlert('');
     }
 });
 

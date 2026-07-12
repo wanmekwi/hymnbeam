@@ -63,7 +63,10 @@ Windows installers ship with releases from **v0.1.5** onwards.
 - **Multi-monitor routing** — automatically sends the projector window to a secondary display.
 - **KJV Bible integration** — browse books, chapters, and verses; project any passage with the same keyboard-first workflow as songs. Translator-added words shown in italics.
 - **Reference lookup** — type any common abbreviation or variation (`Ecc 9:11`, `ec 9 11`, `ecclesiastes 9:11`) and HymnBeam resolves it to the right verse.
-- **Collections** — group songs into ordered setlists; navigate through them with a single keystroke.
+- **Order of service** — build a collection from songs, Bible passages, and logo slides in one ordered list, then drive the whole service through it with a single keystroke.
+- **Next-slide preview** — the operator always sees what the next advance will project, alongside what's on screen now.
+- **Logo / holding slide** — show the church logo (or a plain themed slide) for pre-service and transitions, separate from blanking.
+- **Announcement banner** — flash a one-line alert (e.g. a nursery call) over whatever is projected, with optional auto-clear.
 - **Full-text search** — search songs by title, author, or lyrics; search the entire KJV by keyword.
 - **Song import / export** — JSON, CSV, and plain-text formats. Imports can add to the current library or replace it entirely (with confirmation).
 - **Background images** — upload custom backgrounds per-song or as a global default.
@@ -85,6 +88,7 @@ The companion website **[vsb.bibeltroen.no](https://vsb.bibeltroen.no)** lets yo
 |-----|--------|
 | `→` / `←` | Next / previous verse |
 | `Space` | Blank / unblank screen |
+| `L` | Show / hide logo slide |
 | `1`–`9` | Jump to verse 1–9 |
 | `0` | Jump to verse 10 |
 | `Escape` | Clear display |
@@ -96,6 +100,7 @@ The companion website **[vsb.bibeltroen.no](https://vsb.bibeltroen.no)** lets yo
 | `⌘I` | Import songs |
 | `⌘⇧P` | Open / close projector |
 | `⌘B` | Blank screen |
+| `⌘L` | Show / hide logo slide |
 
 ---
 

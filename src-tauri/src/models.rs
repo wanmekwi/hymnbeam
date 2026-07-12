@@ -61,7 +61,13 @@ pub struct SongSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionEntry {
     pub id: i64,
-    pub song_id: i64,
+    // "song" | "bible" | "logo"
+    pub item_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub song_id: Option<i64>,
+    // Bible reference (e.g. "John 3:16-18") for bible entries; null otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
@@ -123,9 +129,26 @@ pub struct ImportedHymn {
     pub author: Option<String>,
     #[serde(default)]
     pub lyrics: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_stringy_optional")]
+    // Accept the common field-name variants exporters use for the key. The
+    // rename_all makes the default "musicalKey"; the aliases cover the rest.
+    #[serde(
+        default,
+        alias = "key",
+        alias = "musical_key",
+        deserialize_with = "deserialize_stringy_optional"
+    )]
     pub musical_key: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_stringy_optional")]
+    // Likewise for the hymn number: many song databases export it as plain
+    // "number". Without these aliases the number was silently dropped.
+    #[serde(
+        default,
+        alias = "number",
+        alias = "song_number",
+        alias = "hymnNumber",
+        alias = "hymn_number",
+        alias = "no",
+        deserialize_with = "deserialize_stringy_optional"
+    )]
     pub song_number: Option<String>,
     #[serde(default)]
     pub verses: Option<Vec<ImportedVerse>>,

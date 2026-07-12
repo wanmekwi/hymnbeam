@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bible::{get_books, get_chapter, search_bible, SearchHit};
 use crate::collections::{
-    add_song_to_collection, create_collection, delete_collection, get_all_collections,
+    add_item_to_collection, create_collection, delete_collection, get_all_collections,
     get_collection, remove_song_from_collection, rename_collection, reorder_collection_songs,
 };
 use crate::backgrounds::{read_image, save_image};
@@ -93,8 +93,13 @@ struct RenameCollectionBody {
 }
 
 #[derive(Deserialize)]
-struct AddSongBody {
-    song_id: i64,
+struct AddItemBody {
+    #[serde(default)]
+    song_id: Option<i64>,
+    #[serde(default)]
+    item_type: Option<String>,
+    #[serde(default)]
+    reference: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -374,9 +379,23 @@ async fn delete_existing_collection(
 
 async fn add_song_to_col(
     Path(collection_id): Path<i64>,
-    Json(body): Json<AddSongBody>,
+    Json(body): Json<AddItemBody>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    add_song_to_collection(collection_id, body.song_id)
+    // item_type defaults to "song" so existing callers keep working.
+    let item_type = body.item_type.as_deref().unwrap_or("song");
+    let (song_id, reference): (Option<i64>, Option<String>) = match item_type {
+        "song" => (Some(body.song_id.ok_or(StatusCode::BAD_REQUEST)?), None),
+        "bible" => {
+            let r = body
+                .reference
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(StatusCode::BAD_REQUEST)?;
+            (None, Some(r))
+        }
+        "logo" => (None, None),
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+    add_item_to_collection(collection_id, item_type, song_id, reference.as_deref())
         .map(|entry_id| Json(EntryIdResponse { entry_id }))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

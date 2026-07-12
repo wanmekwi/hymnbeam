@@ -218,15 +218,22 @@ fn parse_csv(content: &str) -> Result<Vec<Song>, String> {
 
     // Resolve columns by header name so any column order is accepted.
     let headers = reader.headers().map_err(|e| e.to_string())?.clone();
-    let col = |name: &str| headers.iter().position(|h| h.trim().eq_ignore_ascii_case(name));
-    let title_idx = col("title").ok_or("CSV missing required 'title' column")?;
-    let author_idx = col("author");
-    let label_idx = col("verse_label");
-    let text_idx = col("verse_text");
+    let col = |names: &[&str]| {
+        names.iter().find_map(|name| {
+            headers.iter().position(|h| h.trim().eq_ignore_ascii_case(name))
+        })
+    };
+    let title_idx = col(&["title"]).ok_or("CSV missing required 'title' column")?;
+    let author_idx = col(&["author"]);
+    let number_idx = col(&["number", "song_number", "songnumber", "no"]);
+    let key_idx = col(&["key", "musical_key", "musicalkey"]);
+    let label_idx = col(&["verse_label"]);
+    let text_idx = col(&["verse_text"]);
 
     // Preserve the order songs first appear in the file.
     let mut order: Vec<String> = Vec::new();
-    let mut songs_data: HashMap<String, (Option<String>, Vec<(String, String)>)> = HashMap::new();
+    type SongData = (Option<String>, Option<String>, Option<String>, Vec<(String, String)>);
+    let mut songs_data: HashMap<String, SongData> = HashMap::new();
 
     for result in reader.records() {
         let record = result.map_err(|e| e.to_string())?;
@@ -236,31 +243,35 @@ fn parse_csv(content: &str) -> Result<Vec<Song>, String> {
             continue;
         }
 
-        let author = author_idx
-            .and_then(|i| record.get(i))
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty());
+        let field = |idx: Option<usize>| {
+            idx.and_then(|i| record.get(i))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        };
+        let author = field(author_idx);
+        let number = field(number_idx);
+        let key = field(key_idx);
         let verse_label = label_idx.and_then(|i| record.get(i)).unwrap_or("").to_string();
         let verse_text = text_idx.and_then(|i| record.get(i)).unwrap_or("").to_string();
 
         let entry = songs_data.entry(title.clone()).or_insert_with(|| {
             order.push(title.clone());
-            (author, Vec::new())
+            (author, number, key, Vec::new())
         });
         if !verse_text.is_empty() {
             let label = if verse_label.is_empty() {
-                format!("Verse {}", entry.1.len() + 1)
+                format!("Verse {}", entry.3.len() + 1)
             } else {
                 verse_label
             };
-            entry.1.push((label, verse_text));
+            entry.3.push((label, verse_text));
         }
     }
 
     let mut songs = Vec::new();
 
     for title in order {
-        let (author, verses_data) = songs_data.remove(&title).unwrap();
+        let (author, number, key, verses_data) = songs_data.remove(&title).unwrap();
         let verses: Vec<Verse> = verses_data
             .into_iter()
             .map(|(label, text)| Verse {
@@ -275,8 +286,8 @@ fn parse_csv(content: &str) -> Result<Vec<Song>, String> {
             id: None,
             title,
             author,
-            musical_key: None,
-            song_number: None,
+            musical_key: key,
+            song_number: number,
             verses,
             tags: Vec::new(),
         });
@@ -435,6 +446,27 @@ mod tests {
         let json_crlf = "{\"title\": \"It Is Well\", \"lyrics\": \"When peace like a river\\r\\n\\r\\nAttendeth my way\"}";
         let ids = import_file(json_crlf, "song.json").expect("CRLF JSON should import");
         assert_eq!(ids.len(), 1);
+    }
+
+    #[test]
+    fn imports_json_number_and_key_field_aliases() {
+        let _db = setup_temp_db();
+
+        // The BCF song databases (and many exporters) use "number" and "key"
+        // rather than "songNumber"/"musicalKey". Both must be picked up.
+        let json = r#"[{"number": "202", "key": "G", "title": "Amazing Grace", "lyrics": "how sweet the sound"}]"#;
+        let ids = import_file(json, "library.json").expect("import");
+        assert_eq!(ids.len(), 1);
+
+        let song = crate::songs::get_song(ids[0]).unwrap().unwrap();
+        assert_eq!(song.song_number.as_deref(), Some("202"));
+        assert_eq!(song.musical_key.as_deref(), Some("G"));
+
+        // A numeric (non-string) number is normalised to a string too.
+        let json_num = r#"{"number": 27, "title": "Abide With Me", "lyrics": "fast falls the eventide"}"#;
+        let ids = import_file(json_num, "one.json").expect("import numeric number");
+        let song = crate::songs::get_song(ids[0]).unwrap().unwrap();
+        assert_eq!(song.song_number.as_deref(), Some("27"));
     }
 
     #[test]

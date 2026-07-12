@@ -53,6 +53,21 @@ fn import_songs_from_content(
     })
 }
 
+// Opens an http(s) URL in the user's default browser. Used by the
+// check-for-updates flow to send the user to the release download when true
+// in-place updating isn't available. Restricted to http(s) so it can never be
+// coaxed into launching a local file or command.
+#[tauri::command]
+fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Only http(s) URLs are allowed".to_string());
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn save_background_image(filename: String, data_base64: String) -> Result<String, String> {
     use base64::Engine;
@@ -208,13 +223,20 @@ fn main() {
         // available when the webview is created.
         .plugin(tauri_plugin_axum::init(api::create_router()))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
+        // The updater plugin is registered but stays dormant until an updater
+        // endpoint + pubkey are configured (see docs/plans/auto-update-setup.md).
+        // Without that config, check() simply errors and the frontend falls
+        // back to opening the release download in the browser.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_app_version,
             open_projector_window,
             close_projector_window,
             send_to_projector,
             import_songs_from_content,
-            save_background_image
+            save_background_image,
+            open_external
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -224,9 +246,12 @@ fn main() {
             let settings_item = MenuItemBuilder::with_id("settings", "Settings…")
                 .accelerator("CmdOrCtrl+,")
                 .build(handle)?;
+            let check_update_item =
+                MenuItemBuilder::with_id("check_update", "Check for Updates…").build(handle)?;
 
             let app_submenu = SubmenuBuilder::new(handle, "HymnBeam")
                 .about(None)
+                .item(&check_update_item)
                 .separator()
                 .item(&settings_item)
                 .separator()
@@ -288,10 +313,14 @@ fn main() {
             let blank_screen_item = MenuItemBuilder::with_id("blank_screen", "Blank Screen")
                 .accelerator("CmdOrCtrl+B")
                 .build(handle)?;
+            let show_logo_item = MenuItemBuilder::with_id("show_logo", "Show / Hide Logo")
+                .accelerator("CmdOrCtrl+L")
+                .build(handle)?;
 
             let view_submenu = SubmenuBuilder::new(handle, "View")
                 .item(&toggle_projector_item)
                 .item(&blank_screen_item)
+                .item(&show_logo_item)
                 .build()?;
 
             let window_submenu = SubmenuBuilder::new(handle, "Window")
@@ -316,6 +345,7 @@ fn main() {
                 let id = event.id().as_ref();
                 let action = match id {
                     "settings" => "open-settings",
+                    "check_update" => "menu-check-update",
                     "new_song" => "menu-new-song",
                     "import_songs" => "menu-import",
                     "export_json" => "menu-export-json",
@@ -325,6 +355,7 @@ fn main() {
                     "delete_song" => "menu-delete-song",
                     "toggle_projector" => "menu-toggle-projector",
                     "blank_screen" => "menu-blank-screen",
+                    "show_logo" => "menu-toggle-logo",
                     _ => return,
                 };
                 if let Some(window) = app.get_webview_window("operator") {
