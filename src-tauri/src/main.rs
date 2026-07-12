@@ -229,6 +229,10 @@ fn main() {
         // Without that config, check() simply errors and the frontend falls
         // back to opening the release download in the browser.
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Lets the frontend relaunch the app after an in-place update installs
+        // (tryPluginAutoUpdate → window.__TAURI__.process.relaunch). Harmless
+        // while the updater is dormant.
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             get_app_version,
             open_projector_window,
