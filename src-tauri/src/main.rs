@@ -149,18 +149,42 @@ fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
     let position = target.position();
     let size = target.size();
 
-    let projector = WebviewWindowBuilder::new(
+    // With only one display there is nowhere to send a separate projected
+    // output: a fullscreen, borderless, always-on-top projector would land
+    // directly on top of the operator, hiding it entirely with no visible way
+    // back (only the Escape key closes it). That reads as a frozen/crashed app.
+    // So on a single-monitor machine we open the projector as an ordinary
+    // decorated, resizable, non-topmost window the operator can sit beside.
+    // A genuine two-screen setup is unchanged: fullscreen on the external one.
+    let single_monitor = monitor_list.len() == 1;
+
+    let mut builder = WebviewWindowBuilder::new(
         &app,
         "projector",
         WebviewUrl::App("projector.html".into()),
     )
-    .title("HymnBeam — Projector")
-    .position(position.x as f64, position.y as f64)
-    .inner_size(size.width as f64, size.height as f64)
-    .decorations(false)
-    .always_on_top(true)
-    .build()
-    .map_err(|e| e.to_string())?;
+    .title("HymnBeam — Projector");
+
+    builder = if single_monitor {
+        // Windowed preview: half the screen width (capped), 16:9, centred.
+        let win_w = (size.width as f64 * 0.5).min(960.0);
+        let win_h = win_w * 9.0 / 16.0;
+        let win_x = position.x as f64 + (size.width as f64 - win_w) / 2.0;
+        let win_y = position.y as f64 + (size.height as f64 - win_h) / 2.0;
+        builder
+            .position(win_x, win_y)
+            .inner_size(win_w, win_h)
+            .resizable(true)
+            .decorations(true)
+    } else {
+        builder
+            .position(position.x as f64, position.y as f64)
+            .inner_size(size.width as f64, size.height as f64)
+            .decorations(false)
+            .always_on_top(true)
+    };
+
+    let projector = builder.build().map_err(|e| e.to_string())?;
 
     // On Windows/Linux the app menu is attached to every window, so the
     // fullscreen projector would show a menu bar strip across the top of the
@@ -168,14 +192,16 @@ fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     let _ = projector.hide_menu();
 
-    // Re-assert the position/size on the target display before fullscreen. The
-    // builder's position can be applied asynchronously by the macOS window
-    // server, so without this native fullscreen may capture the operator's
-    // screen instead of the target one.
-    let _ = projector.set_position(tauri::PhysicalPosition::new(position.x, position.y));
-    let _ = projector.set_size(tauri::PhysicalSize::new(size.width, size.height));
-    // Move to the target display first, then enter fullscreen on that screen.
-    let _ = projector.set_fullscreen(true);
+    if !single_monitor {
+        // Re-assert the position/size on the target display before fullscreen.
+        // The builder's position can be applied asynchronously by the macOS
+        // window server, so without this native fullscreen may capture the
+        // operator's screen instead of the target one.
+        let _ = projector.set_position(tauri::PhysicalPosition::new(position.x, position.y));
+        let _ = projector.set_size(tauri::PhysicalSize::new(size.width, size.height));
+        // Move to the target display first, then enter fullscreen on that screen.
+        let _ = projector.set_fullscreen(true);
+    }
 
     // Notify the operator when the projector window is closed (e.g. Escape key)
     // so the operator can reset its projectorOpen state and update the button.
