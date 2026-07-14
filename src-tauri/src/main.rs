@@ -124,8 +124,14 @@ fn pick_projector_monitor<'a>(
         .unwrap_or(&monitors[0])
 }
 
+// Async so this runs off the main thread. Creating a second WebView2 window
+// with `build()` needs the main thread's event loop to keep pumping while the
+// controller initialises; a *synchronous* command blocks that very thread,
+// deadlocking on Windows — the operator window freezes and the projector never
+// finishes loading projector.html (it stays on about:blank). Running the
+// command on the async runtime leaves the main loop free to create the webview.
 #[tauri::command]
-fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
+async fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
     if app.get_webview_window("projector").is_some() {
         return Ok(());
     }
