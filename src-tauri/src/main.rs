@@ -162,6 +162,12 @@ fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
     .build()
     .map_err(|e| e.to_string())?;
 
+    // On Windows/Linux the app menu is attached to every window, so the
+    // fullscreen projector would show a menu bar strip across the top of the
+    // projected output. macOS has a single global menu bar, so nothing to hide.
+    #[cfg(not(target_os = "macos"))]
+    let _ = projector.hide_menu();
+
     // Re-assert the position/size on the target display before fullscreen. The
     // builder's position can be applied asynchronously by the macOS window
     // server, so without this native fullscreen may capture the operator's
