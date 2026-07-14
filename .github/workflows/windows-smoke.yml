@@ -1,0 +1,78 @@
+name: Windows smoke test
+
+# Manually triggered runtime verification on a real Windows machine. Builds a
+# debug exe, launches it with WebView2 remote debugging enabled, and drives
+# the live webview over the DevTools protocol (.github/scripts/windows-smoke.mjs)
+# to prove the UI boots and the axum custom protocol answers on Windows. An
+# in-app screenshot and the app's console logs are uploaded as artifacts.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-smoke-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-smoke-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Install Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Debug profile: keeps the console subsystem so the app's stdout/stderr
+      # are captured (windows_subsystem = "windows" is release-only).
+      - name: Build debug exe
+        run: cargo build --manifest-path src-tauri/Cargo.toml
+
+      - name: Launch app and run smoke checks
+        run: |
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+          $app = Start-Process -FilePath "src-tauri\target\debug\hymnbeam.exe" -PassThru `
+            -RedirectStandardOutput app-stdout.log -RedirectStandardError app-stderr.log
+
+          node .github/scripts/windows-smoke.mjs
+          $smoke = $LASTEXITCODE
+
+          if ($app.HasExited) {
+            Write-Host "::error::App process exited during the smoke test (exit code $($app.ExitCode))"
+            $smoke = 1
+          } else {
+            Stop-Process -Id $app.Id -Force
+          }
+
+          Write-Host "--- app stdout ---"
+          Get-Content app-stdout.log -ErrorAction SilentlyContinue
+          Write-Host "--- app stderr ---"
+          Get-Content app-stderr.log -ErrorAction SilentlyContinue
+
+          exit $smoke
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke-artifacts
+          path: |
+            smoke-screenshot.png
+            app-stdout.log
+            app-stderr.log
+          if-no-files-found: warn
