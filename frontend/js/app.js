@@ -43,7 +43,23 @@ const DEFAULT_SETTINGS = {
     },
     layout: { showTitleBar: true, showMetaBar: true, showVerseLabel: false, autoBreakLines: true, safeAreaPct: 5 },
     transition: { style: 'fade-up', durationMs: 400 },
-    logo: { image: null }
+    logo: { image: null },
+    // Bible display overrides. While `separate` is false the projector uses the
+    // song settings above for Bible verses too; when turned on, these fields
+    // (seeded from the song settings the first time) drive Bible verses instead.
+    bible: {
+        separate: false,
+        initialized: false,
+        typography: { fontFamily: 'Montserrat', fontWeight: 600, alignment: 'center' },
+        background: {
+            kind: 'solid',
+            color: '#000000',
+            gradient: { from: '#000000', to: '#1a1a2e', angle: 180 },
+            image: { filename: null, dim: 0.4 }
+        },
+        layout: { showTitleBar: true, showMetaBar: true, showVerseLabel: false, autoBreakLines: true, safeAreaPct: 5 },
+        transition: { style: 'fade-up', durationMs: 400 }
+    }
 };
 
 const FONT_STACKS = {
@@ -97,6 +113,8 @@ const elements = {
     nextPreviewEmpty: document.getElementById('nextPreviewEmpty'),
     previewContainer: document.getElementById('previewContainer'),
     previewLayoutToggle: document.getElementById('previewLayoutToggle'),
+    biblePreviewContainer: document.getElementById('biblePreviewContainer'),
+    biblePreviewToggle: document.getElementById('biblePreviewToggle'),
     importBtn: document.getElementById('importBtn'),
     projectorBtn: document.getElementById('projectorBtn'),
     alertBtn: document.getElementById('alertBtn'),
@@ -209,6 +227,13 @@ const elements = {
     setTransDurationValue: document.getElementById('setTransDurationValue'),
     settingsPreview: document.getElementById('settingsPreview'),
     settingsPreviewText: document.querySelector('.settings-preview-text'),
+    settingsTargetRow: document.getElementById('settingsTargetRow'),
+    setDisplayTarget: document.getElementById('setDisplayTarget'),
+    bibleTargetOptions: document.getElementById('bibleTargetOptions'),
+    setBibleSameAsSongs: document.getElementById('setBibleSameAsSongs'),
+    bibleMatchSongBtn: document.getElementById('bibleMatchSongBtn'),
+    setLogoGroup: document.getElementById('setLogoGroup'),
+    settingsContent: document.querySelector('.settings-content'),
     collectionEmptyState: document.getElementById('collectionEmptyState'),
     collectionSongsEmptyState: document.getElementById('collectionSongsEmptyState'),
     collectionBibleInput: document.getElementById('collectionBibleInput'),
@@ -454,6 +479,10 @@ function setContentView(view) {
     elements.contentPlaceholder.hidden = view !== 'placeholder';
     elements.songDisplay.hidden = view !== 'song';
     elements.bibleDisplay.hidden = view !== 'bible';
+    // A preview pane only has layout once its view is shown; rescale now so the
+    // just-revealed pane (esp. the Bible preview) fills its slot instead of
+    // rendering at the fallback scale(0.1) in the top-left corner.
+    if (typeof syncPreviewScale === 'function') syncPreviewScale();
 }
 
 function renderSongDisplay() {
@@ -643,6 +672,7 @@ function updateNextPreview() {
 // because the iframe pulls everything from buildProjectorPayload(). The single
 // choke point for both preview panes, so the Next pane updates in lockstep.
 function updatePreview(_text) {
+    if (!previewsEnabled()) return;   // previews are off — don't feed them
     const frame = elements.previewFrame;
     if (frame && frame.contentWindow) {
         const payload = buildProjectorPayload();
@@ -2073,10 +2103,10 @@ async function projectCollectionBible(reference) {
             hasNext: false
         };
         const msg = { type: 'update-lyrics', ...payload };
-        if (elements.previewFrame?.contentWindow) {
+        if (previewsEnabled() && elements.previewFrame?.contentWindow) {
             elements.previewFrame.contentWindow.postMessage(msg, '*');
+            clearNextPreview();
         }
-        clearNextPreview();
         if (window.__TAURI__) {
             if (state.projectorOpen) {
                 window.__TAURI__.core.invoke('send_to_projector', {
@@ -2209,6 +2239,47 @@ async function toggleCollectionPicker() {
 
 // ---------- Display settings ----------
 
+// Which display profile the settings dialog is editing: 'song' or 'bible'.
+let settingsTarget = 'song';
+
+// The settings object the dialog's controls currently read/write. Bible verses
+// only use their own profile once the user turns on "separate"; until then the
+// Bible target is a locked, read-only view of the song settings.
+function targetSettings() {
+    if (settingsTarget === 'bible' && state.settings.bible.separate) {
+        return state.settings.bible;
+    }
+    return state.settings;
+}
+
+function bibleIsLocked() {
+    return settingsTarget === 'bible' && !state.settings.bible.separate;
+}
+
+// Deep-copy the song display fields (everything except the logo, which stays
+// shared) so the Bible profile can start life identical to the songs.
+function songDisplaySlice() {
+    const s = state.settings;
+    return JSON.parse(JSON.stringify({
+        typography: s.typography, background: s.background,
+        layout: s.layout, transition: s.transition
+    }));
+}
+
+// Reflect the current edit target in the target-row controls and lock the
+// display panels while Bible mirrors the song settings.
+function syncTargetRow() {
+    elements.setDisplayTarget.querySelectorAll('button').forEach(b =>
+        b.classList.toggle('active', b.dataset.value === settingsTarget));
+    const onBible = settingsTarget === 'bible';
+    elements.bibleTargetOptions.classList.toggle('hidden', !onBible);
+    elements.setBibleSameAsSongs.checked = !state.settings.bible.separate;
+    elements.bibleMatchSongBtn.classList.toggle('hidden', !onBible || !state.settings.bible.separate);
+    // The logo is a shared holding slide, not a per-profile option.
+    elements.setLogoGroup.classList.toggle('hidden', onBible);
+    elements.settingsContent.classList.toggle('display-locked', bibleIsLocked());
+}
+
 function mergeSettings(saved) {
     const out = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     if (saved && typeof saved === 'object') {
@@ -2223,6 +2294,20 @@ function mergeSettings(saved) {
         if (saved.layout) Object.assign(out.layout, saved.layout);
         if (saved.transition) Object.assign(out.transition, saved.transition);
         if (saved.logo) Object.assign(out.logo, saved.logo);
+        if (saved.bible && typeof saved.bible === 'object') {
+            const sb = saved.bible;
+            out.bible.separate = !!sb.separate;
+            out.bible.initialized = !!sb.initialized;
+            if (sb.typography) Object.assign(out.bible.typography, sb.typography);
+            if (sb.background) {
+                const g = sb.background.gradient, im = sb.background.image;
+                Object.assign(out.bible.background, sb.background);
+                if (g) Object.assign(out.bible.background.gradient, g);
+                if (im) Object.assign(out.bible.background.image, im);
+            }
+            if (sb.layout) Object.assign(out.bible.layout, sb.layout);
+            if (sb.transition) Object.assign(out.bible.transition, sb.transition);
+        }
     }
     return out;
 }
@@ -2259,9 +2344,9 @@ function scheduleSaveSettings() {
 }
 
 function pushSettingsToPreview() {
-    if (!state.settings) return;
+    if (!state.settings || !previewsEnabled()) return;
     const msg = { type: 'apply-settings', settings: state.settings };
-    for (const frame of [elements.previewFrame, elements.nextPreviewFrame]) {
+    for (const frame of [elements.previewFrame, elements.nextPreviewFrame, elements.biblePreviewFrame]) {
         if (frame && frame.contentWindow) frame.contentWindow.postMessage(msg, '*');
     }
 }
@@ -2289,7 +2374,7 @@ function bgCssForSettings(s) {
 }
 
 function updateSettingsPreview() {
-    const s = state.settings;
+    const s = targetSettings();
     elements.settingsPreview.style.background = bgCssForSettings(s);
     const text = elements.settingsPreviewText;
     text.style.fontFamily = FONT_STACKS[s.typography.fontFamily] || FONT_STACKS['Montserrat'];
@@ -2298,7 +2383,8 @@ function updateSettingsPreview() {
 }
 
 function syncSettingsForm() {
-    const s = state.settings;
+    syncTargetRow();
+    const s = targetSettings();
     elements.setFontFamily.value = s.typography.fontFamily;
     elements.setFontWeight.value = s.typography.fontWeight;
     elements.setFontWeightValue.textContent = s.typography.fontWeight;
@@ -2339,7 +2425,7 @@ function syncSettingsForm() {
 }
 
 function syncBgImageThumb() {
-    const fn = state.settings.background.image.filename;
+    const fn = targetSettings().background.image.filename;
     if (fn) {
         const url = `${API_URL}/backgrounds/${encodeURIComponent(fn)}`;
         elements.setBgImageThumb.style.backgroundImage = `url('${url}')`;
@@ -2389,12 +2475,18 @@ async function uploadBackgroundImage(file) {
 }
 
 function onSettingsChanged() {
+    // Editing the Bible profile counts as customising it, so it won't be
+    // re-seeded from the song settings next time "separate" is toggled on.
+    if (settingsTarget === 'bible' && state.settings.bible.separate) {
+        state.settings.bible.initialized = true;
+    }
     updateSettingsPreview();
     pushSettingsToProjector();
     scheduleSaveSettings();
 }
 
 function openSettingsModal() {
+    settingsTarget = 'song';
     syncSettingsForm();
     updateSettingsPreview();
     elements.settingsModal.classList.add('active');
@@ -2696,6 +2788,8 @@ function initSettingsDialog() {
             document.querySelector(`.settings-panel[data-panel="${tab.dataset.tab}"]`).classList.add('active');
             const isLibrary = tab.dataset.tab === 'library';
             document.querySelector('.settings-body').classList.toggle('library-mode', isLibrary);
+            // The Songs/Bible target only applies to the display tabs.
+            elements.settingsTargetRow.classList.toggle('hidden', isLibrary);
             if (isLibrary) refreshLibraryPanel();
         });
     });
@@ -2704,18 +2798,45 @@ function initSettingsDialog() {
     elements.scanDuplicatesBtn.addEventListener('click', scanDuplicates);
     elements.applySourceBtn.addEventListener('click', applyBatchSource);
 
+    // --- Display-profile editing target (Songs / Bible) ---
+    elements.setDisplayTarget.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', () => {
+            settingsTarget = b.dataset.value;
+            syncSettingsForm();
+            updateSettingsPreview();
+        });
+    });
+    elements.setBibleSameAsSongs.addEventListener('change', () => {
+        const separate = !elements.setBibleSameAsSongs.checked;
+        state.settings.bible.separate = separate;
+        // Seed the Bible profile from the current song look the first time it's
+        // split off, so "separate" starts out identical to the songs.
+        if (separate && !state.settings.bible.initialized) {
+            Object.assign(state.settings.bible, songDisplaySlice());
+            state.settings.bible.initialized = true;
+        }
+        syncSettingsForm();
+        onSettingsChanged();
+    });
+    elements.bibleMatchSongBtn.addEventListener('click', () => {
+        Object.assign(state.settings.bible, songDisplaySlice());
+        syncSettingsForm();
+        onSettingsChanged();
+    });
+
     elements.setFontFamily.addEventListener('change', () => {
-        state.settings.typography.fontFamily = elements.setFontFamily.value;
+        targetSettings().typography.fontFamily = elements.setFontFamily.value;
         onSettingsChanged();
     });
     elements.setFontWeight.addEventListener('input', () => {
-        state.settings.typography.fontWeight = parseInt(elements.setFontWeight.value, 10);
-        elements.setFontWeightValue.textContent = state.settings.typography.fontWeight;
+        const w = parseInt(elements.setFontWeight.value, 10);
+        targetSettings().typography.fontWeight = w;
+        elements.setFontWeightValue.textContent = w;
         onSettingsChanged();
     });
     elements.setAlignment.querySelectorAll('button').forEach(b => {
         b.addEventListener('click', () => {
-            state.settings.typography.alignment = b.dataset.value;
+            targetSettings().typography.alignment = b.dataset.value;
             syncSettingsForm();
             onSettingsChanged();
         });
@@ -2723,26 +2844,27 @@ function initSettingsDialog() {
 
     elements.setBgKind.querySelectorAll('button').forEach(b => {
         b.addEventListener('click', () => {
-            state.settings.background.kind = b.dataset.value;
+            targetSettings().background.kind = b.dataset.value;
             syncSettingsForm();
             onSettingsChanged();
         });
     });
     elements.setBgColor.addEventListener('input', () => {
-        state.settings.background.color = elements.setBgColor.value;
+        targetSettings().background.color = elements.setBgColor.value;
         onSettingsChanged();
     });
     elements.setBgGradFrom.addEventListener('input', () => {
-        state.settings.background.gradient.from = elements.setBgGradFrom.value;
+        targetSettings().background.gradient.from = elements.setBgGradFrom.value;
         onSettingsChanged();
     });
     elements.setBgGradTo.addEventListener('input', () => {
-        state.settings.background.gradient.to = elements.setBgGradTo.value;
+        targetSettings().background.gradient.to = elements.setBgGradTo.value;
         onSettingsChanged();
     });
     elements.setBgGradAngle.addEventListener('input', () => {
-        state.settings.background.gradient.angle = parseInt(elements.setBgGradAngle.value, 10);
-        elements.setBgGradAngleValue.textContent = `${state.settings.background.gradient.angle}°`;
+        const a = parseInt(elements.setBgGradAngle.value, 10);
+        targetSettings().background.gradient.angle = a;
+        elements.setBgGradAngleValue.textContent = `${a}°`;
         onSettingsChanged();
     });
 
@@ -2754,8 +2876,8 @@ function initSettingsDialog() {
         if (!file) return;
         try {
             const filename = await uploadBackgroundImage(file);
-            state.settings.background.image.filename = filename;
-            state.settings.background.kind = 'image';
+            targetSettings().background.image.filename = filename;
+            targetSettings().background.kind = 'image';
             syncSettingsForm();
             onSettingsChanged();
         } catch (err) {
@@ -2764,16 +2886,15 @@ function initSettingsDialog() {
         }
     });
     elements.setBgImageRemoveBtn.addEventListener('click', () => {
-        state.settings.background.image.filename = null;
-        if (state.settings.background.kind === 'image') {
-            state.settings.background.kind = 'solid';
-        }
+        const t = targetSettings();
+        t.background.image.filename = null;
+        if (t.background.kind === 'image') t.background.kind = 'solid';
         syncSettingsForm();
         onSettingsChanged();
     });
     elements.setBgImageDim.addEventListener('input', () => {
         const pct = parseInt(elements.setBgImageDim.value, 10);
-        state.settings.background.image.dim = pct / 100;
+        targetSettings().background.image.dim = pct / 100;
         elements.setBgImageDimValue.textContent = `${pct}%`;
         onSettingsChanged();
     });
@@ -2804,7 +2925,7 @@ function initSettingsDialog() {
     // Layout
     const wireToggle = (el, path) => {
         el.addEventListener('change', () => {
-            state.settings.layout[path] = el.checked;
+            targetSettings().layout[path] = el.checked;
             onSettingsChanged();
         });
     };
@@ -2814,7 +2935,7 @@ function initSettingsDialog() {
     wireToggle(elements.setAutoBreakLines, 'autoBreakLines');
     elements.setSafeArea.addEventListener('input', () => {
         const pct = parseInt(elements.setSafeArea.value, 10);
-        state.settings.layout.safeAreaPct = pct;
+        targetSettings().layout.safeAreaPct = pct;
         elements.setSafeAreaValue.textContent = `${pct}%`;
         onSettingsChanged();
     });
@@ -2822,20 +2943,21 @@ function initSettingsDialog() {
     // Transitions
     elements.setTransStyle.querySelectorAll('button').forEach(b => {
         b.addEventListener('click', () => {
-            state.settings.transition.style = b.dataset.value;
+            targetSettings().transition.style = b.dataset.value;
             syncSettingsForm();
             onSettingsChanged();
         });
     });
     elements.setTransDuration.addEventListener('input', () => {
         const ms = parseInt(elements.setTransDuration.value, 10);
-        state.settings.transition.durationMs = ms;
+        targetSettings().transition.durationMs = ms;
         elements.setTransDurationValue.textContent = `${ms} ms`;
         onSettingsChanged();
     });
 
     elements.settingsResetBtn.addEventListener('click', () => {
         state.settings = mergeSettings(null);
+        settingsTarget = 'song';
         syncSettingsForm();
         onSettingsChanged();
     });
@@ -3246,9 +3368,14 @@ window.addEventListener('message', (event) => {
 // whole rendered output via transform: scale to fit the preview window.
 const PREVIEW_VIRTUAL_W = 1920;
 function syncPreviewScale() {
+    // The Bible tab's preview lives in its own .preview-window (no id), so
+    // derive its slot from the frame itself. Without this it stays at the CSS
+    // fallback scale(0.1) and the verse renders tiny in the pane's top-left.
+    const bibleWindow = elements.biblePreviewFrame?.closest('.preview-window');
     const panes = [
         [elements.previewWindow, elements.previewFrame],
-        [elements.nextPreviewWindow, elements.nextPreviewFrame]
+        [elements.nextPreviewWindow, elements.nextPreviewFrame],
+        [bibleWindow, elements.biblePreviewFrame]
     ];
     for (const [win, frame] of panes) {
         if (!win || !frame) continue;
@@ -3259,23 +3386,46 @@ function syncPreviewScale() {
 }
 window.addEventListener('resize', syncPreviewScale);
 
-// Preview visibility: show or hide the "On screen now" / "Next" previews from
-// the main screen, remembered between sessions.
+// Preview on/off: turn the operator's WYSIWYG previews (song "On screen now" /
+// "Next" and the Bible preview) off entirely — hidden AND no longer fed — from
+// a header button in either view. Remembered between sessions. The real
+// projector output is unaffected; only these operator-side previews are gated.
 const PREVIEW_HIDDEN_KEY = 'hymnbeam.previewHidden';
 const SVG_EYE = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="2"/></svg>';
 const SVG_EYE_OFF = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6.3 3.7A6.5 6.5 0 0 1 8 3.5c4.5 0 7 4.5 7 4.5a12 12 0 0 1-2 2.5M3.8 4.9A12 12 0 0 0 1 8s2.5 4.5 7 4.5a6.5 6.5 0 0 0 2.6-.5"/><path d="M2 2l12 12"/></svg>';
 
+let previewsHidden = false;
+
+// Preview iframes are only fed when previews are on, so an "off" preview does no
+// rendering work. The projector send paths call this to skip preview posts.
+function previewsEnabled() {
+    return !previewsHidden;
+}
+
 function applyPreviewVisibility(hidden) {
+    previewsHidden = hidden;
     elements.previewContainer.classList.toggle('collapsed', hidden);
-    // The icon reflects the current state; the tooltip names the action.
-    elements.previewLayoutToggle.innerHTML = hidden ? SVG_EYE_OFF : SVG_EYE;
-    elements.previewLayoutToggle.title = hidden ? 'Show previews' : 'Hide previews';
-    // Re-fit the iframes now they have width again (no-op while hidden).
-    if (!hidden) syncPreviewScale();
+    if (elements.biblePreviewContainer) {
+        elements.biblePreviewContainer.classList.toggle('collapsed', hidden);
+    }
+    // Both header buttons mirror the shared state; the icon shows the current
+    // state and the tooltip names the action.
+    for (const btn of [elements.previewLayoutToggle, elements.biblePreviewToggle]) {
+        if (!btn) continue;
+        btn.innerHTML = hidden ? SVG_EYE_OFF : SVG_EYE;
+        btn.title = hidden ? 'Show preview' : 'Hide preview';
+    }
+    // Turning previews back on: re-fit and repump the iframes, which received no
+    // updates while off.
+    if (!hidden) {
+        syncPreviewScale();
+        pushSettingsToPreview();
+        updatePreview();
+    }
 }
 
 function togglePreviewVisibility() {
-    const hidden = !elements.previewContainer.classList.contains('collapsed');
+    const hidden = !previewsHidden;
     try { localStorage.setItem(PREVIEW_HIDDEN_KEY, hidden ? '1' : '0'); } catch (e) { /* non-fatal */ }
     applyPreviewVisibility(hidden);
 }
@@ -3285,6 +3435,9 @@ function initPreviewLayout() {
     try { hidden = localStorage.getItem(PREVIEW_HIDDEN_KEY) === '1'; } catch (e) { /* default */ }
     applyPreviewVisibility(hidden);
     elements.previewLayoutToggle.addEventListener('click', togglePreviewVisibility);
+    if (elements.biblePreviewToggle) {
+        elements.biblePreviewToggle.addEventListener('click', togglePreviewVisibility);
+    }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -3296,8 +3449,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Set the preview scale once we have layout, and again on any size change.
     syncPreviewScale();
-    if (elements.previewWindow && typeof ResizeObserver !== 'undefined') {
-        new ResizeObserver(syncPreviewScale).observe(elements.previewWindow);
+    if (typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(syncPreviewScale);
+        if (elements.previewWindow) ro.observe(elements.previewWindow);
+        // The Bible pane is display:none until its tab opens, so its window has
+        // zero width at startup; observing it re-scales the moment it appears.
+        const bibleWindow = elements.biblePreviewFrame?.closest('.preview-window');
+        if (bibleWindow) ro.observe(bibleWindow);
     }
 
     const ready = await waitForBackend();

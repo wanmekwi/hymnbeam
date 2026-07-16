@@ -177,7 +177,8 @@ function buildBibleVersesArray() {
 
 function sendBiblePayload(payload) {
     const frame = document.getElementById('biblePreviewFrame');
-    if (frame && frame.contentWindow) {
+    const previewOn = typeof previewsEnabled !== 'function' || previewsEnabled();
+    if (previewOn && frame && frame.contentWindow) {
         frame.contentWindow.postMessage({ type: 'update-lyrics', ...payload }, '*');
     }
     if (state.projectorOpen && window.__TAURI__) {

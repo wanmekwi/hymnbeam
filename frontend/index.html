@@ -338,11 +338,14 @@
                             <h1 class="song-title" id="bibleDisplayTitle"></h1>
                             <p class="song-author" id="bibleDisplaySubtitle">King James Version</p>
                         </div>
-                        <div class="preview-container">
-                            <div class="preview-label">Preview</div>
-                            <div class="preview-window">
-                                <iframe class="preview-frame" id="biblePreviewFrame"
-                                        src="projector.html" title="Projector preview"></iframe>
+                        <div class="preview-area">
+                            <button type="button" class="preview-layout-toggle" id="biblePreviewToggle" aria-label="Toggle preview"></button>
+                            <div class="preview-container" id="biblePreviewContainer">
+                                <div class="preview-label">Preview</div>
+                                <div class="preview-window">
+                                    <iframe class="preview-frame" id="biblePreviewFrame"
+                                            src="projector.html" title="Projector preview"></iframe>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -562,6 +565,19 @@ Second verse lyrics..."></textarea>
                 </div>
 
                 <div class="settings-content">
+                    <div class="settings-target-row" id="settingsTargetRow">
+                        <div class="segmented" id="setDisplayTarget">
+                            <button type="button" data-value="song" class="active">Songs</button>
+                            <button type="button" data-value="bible">Bible</button>
+                        </div>
+                        <div class="bible-target-options hidden" id="bibleTargetOptions">
+                            <label class="toggle-inline" for="setBibleSameAsSongs">
+                                <input type="checkbox" id="setBibleSameAsSongs" class="toggle" checked>
+                                <span>Use same display as songs</span>
+                            </label>
+                            <button type="button" class="btn btn-secondary btn-small hidden" id="bibleMatchSongBtn">Match song settings</button>
+                        </div>
+                    </div>
                     <div class="settings-panel active" data-panel="typography">
                         <div class="form-group">
                             <label for="setFontFamily">Font</label>
@@ -634,7 +650,7 @@ Second verse lyrics..."></textarea>
                             <label class="sub-label">Dim overlay: <span class="value-readout" id="setBgImageDimValue">40%</span></label>
                             <input type="range" id="setBgImageDim" min="0" max="80" step="5" value="40">
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" id="setLogoGroup">
                             <label>Logo / holding slide</label>
                             <div class="image-picker">
                                 <div class="image-thumb" id="setLogoImageThumb">

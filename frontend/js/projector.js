@@ -24,6 +24,7 @@ let currentVerses = [];        // original verse texts, as sent by the operator
 let wrapMap = new Map();       // original verse text -> auto-broken text
 let songFontSize = null;
 let currentSettings = null;
+let pendingSwapTimer = null;   // in-flight transition swap; cancelled when superseded
 const apiBase = (() => {
     if (!window.__TAURI_INTERNALS__ && !window.__TAURI__) {
         return 'http://127.0.0.1:8765';
@@ -106,6 +107,39 @@ function applySettings(settings) {
     }
 }
 
+// The operator sends the whole settings blob (song fields at the top level plus
+// an optional `bible` override). We split it into two display profiles and apply
+// whichever matches what's currently on screen; updateDisplay re-applies on a
+// song<->Bible switch. When Bible isn't split off, it simply reuses the songs'.
+let songSettings = null;
+let bibleSettings = null;
+
+function ingestSettings(raw) {
+    if (!raw || typeof raw !== 'object') return;
+    songSettings = {
+        typography: raw.typography, background: raw.background,
+        layout: raw.layout, transition: raw.transition, logo: raw.logo,
+    };
+    if (raw.bible && raw.bible.separate) {
+        const b = raw.bible;
+        bibleSettings = {
+            typography: b.typography || raw.typography,
+            background: b.background || raw.background,
+            layout: b.layout || raw.layout,
+            transition: b.transition || raw.transition,
+            logo: raw.logo,
+        };
+    } else {
+        bibleSettings = songSettings;
+    }
+    applySettingsForMode(elements.projector.classList.contains('bible-mode'));
+}
+
+function applySettingsForMode(isBible) {
+    const next = isBible ? bibleSettings : songSettings;
+    if (next && next !== currentSettings) applySettings(next);
+}
+
 let currentLabel = '';
 function refreshVerseLabel() {
     const show = currentSettings && currentSettings.layout && currentSettings.layout.showVerseLabel;
@@ -116,7 +150,7 @@ function refreshVerseLabel() {
 async function loadInitialSettings() {
     try {
         const res = await fetch(`${apiBase}/settings`);
-        if (res.ok) applySettings(await res.json());
+        if (res.ok) ingestSettings(await res.json());
     } catch (e) {
         console.warn('Could not load settings', e);
     }
@@ -303,6 +337,10 @@ function updateDisplay(data) {
             hasPrev, hasNext, isBible } = data;
 
     if (isBlank) {
+        // Drop any in-flight swap and forget the current slide so un-blanking
+        // to the same text still re-renders.
+        if (pendingSwapTimer) { clearTimeout(pendingSwapTimer); pendingSwapTimer = null; }
+        currentText = '';
         elements.blankScreen.classList.add('active');
         elements.songTitleBar.classList.remove('visible');
         elements.songMetaBar.classList.remove('visible');
@@ -314,6 +352,9 @@ function updateDisplay(data) {
 
     elements.blankScreen.classList.remove('active');
     elements.projector.classList.toggle('bible-mode', !!isBible);
+    // Apply the matching display profile (song vs Bible) before any font/layout
+    // measurement below so the fit is computed against the right typography.
+    applySettingsForMode(!!isBible);
 
     if (isBible) {
         // Bible mode: no chevrons, no meta bar
@@ -346,14 +387,24 @@ function updateDisplay(data) {
 
     if (text === currentText) return;
 
+    // Commit the target text synchronously and cancel any still-pending swap
+    // from a superseded update. The actual DOM write is deferred by halfDur for
+    // the cross-fade; without committing currentText now and cancelling the old
+    // timer, rapid updates race — e.g. projecting a Bible verse right after a
+    // song: the dedup check above would compare against a stale currentText, and
+    // the song's deferred write could fire *after* the verse's, leaving the
+    // projector stuck showing the song under a Bible-mode layout.
+    currentText = text;
+    if (pendingSwapTimer) clearTimeout(pendingSwapTimer);
+
     const trans = (currentSettings && currentSettings.transition) || {};
     const dur = typeof trans.durationMs === 'number' ? trans.durationMs : 400;
     const halfDur = trans.style === 'cut' ? 0 : Math.round(dur * 0.6);
 
     elements.lyricsContainer.classList.add('transitioning');
 
-    setTimeout(() => {
-        currentText = text;
+    pendingSwapTimer = setTimeout(() => {
+        pendingSwapTimer = null;
         if (isBible) {
             elements.lyricsText.innerHTML = bibleTextToHtml(text);
         } else {
@@ -490,7 +541,7 @@ if (window.__TAURI__) {
         catch (error) { console.error('Error parsing lyrics update:', error); }
     });
     window.__TAURI__.event.listen('apply-settings', (event) => {
-        try { applySettings(JSON.parse(event.payload)); }
+        try { ingestSettings(JSON.parse(event.payload)); }
         catch (error) { console.error('Error parsing settings update:', error); }
     });
     window.__TAURI__.event.listen('show-logo', (event) => {
@@ -508,7 +559,7 @@ window.addEventListener('message', (event) => {
     if (event.data.type === 'update-lyrics') {
         updateDisplay(event.data);
     } else if (event.data.type === 'apply-settings') {
-        applySettings(event.data.settings);
+        ingestSettings(event.data.settings);
     } else if (event.data.type === 'show-logo') {
         setLogoScreen(event.data.show, event.data.image);
     } else if (event.data.type === 'show-alert') {
