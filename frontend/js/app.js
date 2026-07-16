@@ -104,6 +104,7 @@ const elements = {
     biblePreviewFrame: document.getElementById('biblePreviewFrame'),
     displayTitle: document.getElementById('displayTitle'),
     displayAuthor: document.getElementById('displayAuthor'),
+    displaySource: document.getElementById('displaySource'),
     lyricsScroll: document.getElementById('lyricsScroll'),
     previewFrame: document.getElementById('previewFrame'),
     previewWindow: document.getElementById('previewWindow'),
@@ -131,6 +132,23 @@ const elements = {
     dropZone: document.getElementById('dropZone'),
     fileInput: document.getElementById('fileInput'),
     replaceLibraryCheck: document.getElementById('replaceLibraryCheck'),
+    openDbImportBtn: document.getElementById('openDbImportBtn'),
+    dbImportModal: document.getElementById('dbImportModal'),
+    closeDbImportModal: document.getElementById('closeDbImportModal'),
+    dbDropZone: document.getElementById('dbDropZone'),
+    dbFileInput: document.getElementById('dbFileInput'),
+    dbBrowser: document.getElementById('dbBrowser'),
+    dbSourceInfo: document.getElementById('dbSourceInfo'),
+    dbChangeFileBtn: document.getElementById('dbChangeFileBtn'),
+    dbSearchInput: document.getElementById('dbSearchInput'),
+    dbSelectAll: document.getElementById('dbSelectAll'),
+    dbSelectAllLabel: document.getElementById('dbSelectAllLabel'),
+    dbSelectedCount: document.getElementById('dbSelectedCount'),
+    dbSongList: document.getElementById('dbSongList'),
+    dbImportFooter: document.getElementById('dbImportFooter'),
+    dbSourceInput: document.getElementById('dbSourceInput'),
+    dbCancelBtn: document.getElementById('dbCancelBtn'),
+    dbImportSelectedBtn: document.getElementById('dbImportSelectedBtn'),
     toast: document.getElementById('toast'),
     sortSelect: document.getElementById('sortSelect'),
     newSongBtn: document.getElementById('newSongBtn'),
@@ -144,6 +162,7 @@ const elements = {
     songNumberHint: document.getElementById('songNumberHint'),
     songKeyInput: document.getElementById('songKeyInput'),
     songAuthorInput: document.getElementById('songAuthorInput'),
+    songSourceInput: document.getElementById('songSourceInput'),
     songPasteInput: document.getElementById('songPasteInput'),
     quickNav: document.getElementById('quickNav'),
     cancelEditBtn: document.getElementById('cancelEditBtn'),
@@ -152,6 +171,9 @@ const elements = {
     trashList: document.getElementById('trashList'),
     scanDuplicatesBtn: document.getElementById('scanDuplicatesBtn'),
     duplicateList: document.getElementById('duplicateList'),
+    batchSourceInput: document.getElementById('batchSourceInput'),
+    batchSourceUntagged: document.getElementById('batchSourceUntagged'),
+    applySourceBtn: document.getElementById('applySourceBtn'),
     confirmModal: document.getElementById('confirmModal'),
     confirmTitle: document.getElementById('confirmTitle'),
     confirmMessage: document.getElementById('confirmMessage'),
@@ -476,6 +498,10 @@ function renderSongDisplay() {
         ? `#${num}  ${state.currentSong.title}`
         : state.currentSong.title;
     elements.displayAuthor.textContent = state.currentSong.author || '';
+
+    const source = state.currentSong.source;
+    elements.displaySource.textContent = source ? `Source: ${source}` : '';
+    elements.displaySource.hidden = !source;
 
     renderLyrics();
     renderQuickNav();
@@ -1038,6 +1064,196 @@ function closeImportModal() {
 }
 
 
+// ── Import from another database ─────────────────────────────────────────────
+// Opens a second songs database read-only, lets the operator browse it and
+// cherry-pick songs to bring into the live library. The database is never
+// touched — only the selected songs are copied in.
+
+// Holds the currently-opened database. `songs` is the parsed list exactly as
+// returned by the backend; `selected` tracks chosen songs by their index into
+// that list, which is stable because the list is never reordered.
+let dbImport = { filename: '', songs: [], selected: new Set(), filter: '' };
+
+async function previewDatabase(filename, content) {
+    if (window.__TAURI__) {
+        return await window.__TAURI__.core.invoke('preview_import_database', {
+            filename,
+            content,
+        });
+    }
+    const response = await fetch(`${API_URL}/import/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, content }),
+    });
+    if (!response.ok) throw new Error((await response.text().catch(() => '')) || 'Could not read that file');
+    return await response.json();
+}
+
+async function importSelectedSongs(songs, source) {
+    if (window.__TAURI__) {
+        return await window.__TAURI__.core.invoke('import_selected_songs', { songs, source });
+    }
+    const response = await fetch(`${API_URL}/import/selected`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ songs, source }),
+    });
+    if (!response.ok) throw new Error((await response.text().catch(() => '')) || 'Import failed');
+    return await response.json();
+}
+
+function openDbImportModal() {
+    resetDbBrowser();
+    elements.dbImportModal.classList.add('active');
+}
+
+function closeDbImportModal() {
+    elements.dbImportModal.classList.remove('active');
+}
+
+// Return to the file-picker view, discarding whatever database was open.
+function resetDbBrowser() {
+    dbImport = { filename: '', songs: [], selected: new Set(), filter: '' };
+    elements.dbFileInput.value = '';
+    elements.dbSearchInput.value = '';
+    elements.dbSourceInput.value = '';
+    elements.dbDropZone.hidden = false;
+    elements.dbBrowser.hidden = true;
+    elements.dbImportFooter.hidden = true;
+    elements.dbSongList.innerHTML = '';
+}
+
+let dbPreviewInFlight = false;
+async function openDatabaseFile(file) {
+    if (!file || dbPreviewInFlight) return;
+    dbPreviewInFlight = true;
+    elements.dbDropZone.classList.add('busy');
+    try {
+        const content = await file.text();
+        const songs = await previewDatabase(file.name, content);
+        if (!Array.isArray(songs) || songs.length === 0) {
+            updateStatus('No songs found in that file');
+            return;
+        }
+        dbImport = { filename: file.name, songs, selected: new Set(), filter: '' };
+        elements.dbSearchInput.value = '';
+        elements.dbSourceInfo.innerHTML =
+            `<strong>${escapeHtml(file.name)}</strong> — ${songs.length} song${songs.length !== 1 ? 's' : ''}`;
+        elements.dbDropZone.hidden = true;
+        elements.dbBrowser.hidden = false;
+        elements.dbImportFooter.hidden = false;
+        renderDbSongList();
+    } catch (error) {
+        const msg = typeof error === 'string' ? error : (error?.message || 'Could not read that file');
+        updateStatus(msg);
+        console.error('Database preview failed:', error);
+    } finally {
+        dbPreviewInFlight = false;
+        elements.dbDropZone.classList.remove('busy');
+        elements.dbFileInput.value = '';
+    }
+}
+
+// Indices (into dbImport.songs) that match the current search filter.
+function dbVisibleIndices() {
+    const q = dbImport.filter.trim().toLowerCase();
+    return dbImport.songs
+        .map((song, i) => i)
+        .filter((i) => {
+            if (!q) return true;
+            const s = dbImport.songs[i];
+            return (
+                (s.title || '').toLowerCase().includes(q) ||
+                (s.author || '').toLowerCase().includes(q) ||
+                String(s.song_number || '').toLowerCase().includes(q)
+            );
+        });
+}
+
+function renderDbSongList() {
+    const visible = dbVisibleIndices();
+
+    if (visible.length === 0) {
+        elements.dbSongList.innerHTML =
+            `<div class="db-browser-empty">No songs match “${escapeHtml(dbImport.filter)}”.</div>`;
+        updateDbSelectionUI();
+        return;
+    }
+
+    elements.dbSongList.innerHTML = visible.map((i) => {
+        const s = dbImport.songs[i];
+        const number = s.song_number ? `#${escapeHtml(String(s.song_number))}` : '';
+        const verseCount = Array.isArray(s.verses) ? s.verses.length : 0;
+        const meta = [
+            s.author ? escapeHtml(s.author) : '',
+            `${verseCount} verse${verseCount !== 1 ? 's' : ''}`,
+        ].filter(Boolean).join(' · ');
+        const checked = dbImport.selected.has(i) ? 'checked' : '';
+        const selectedClass = dbImport.selected.has(i) ? ' selected' : '';
+        return `
+            <label class="db-song-item${selectedClass}" data-index="${i}">
+                <input type="checkbox" ${checked}>
+                <span class="db-song-info">
+                    <span class="db-song-header">
+                        ${number ? `<span class="num">${number}</span>` : ''}
+                        <span class="title">${escapeHtml(s.title)}</span>
+                        ${s.musical_key ? `<span class="key">${escapeHtml(s.musical_key)}</span>` : ''}
+                    </span>
+                    <span class="db-song-meta">${meta}</span>
+                </span>
+            </label>
+        `;
+    }).join('');
+
+    updateDbSelectionUI();
+}
+
+// Sync the select-all checkbox, selected count, and Import button to the
+// current selection. Select-all reflects only the visible (filtered) songs.
+function updateDbSelectionUI() {
+    const visible = dbVisibleIndices();
+    const visibleSelected = visible.filter((i) => dbImport.selected.has(i)).length;
+    const allVisibleSelected = visible.length > 0 && visibleSelected === visible.length;
+
+    elements.dbSelectAll.checked = allVisibleSelected;
+    elements.dbSelectAll.indeterminate = visibleSelected > 0 && !allVisibleSelected;
+
+    const total = dbImport.selected.size;
+    elements.dbSelectedCount.textContent = total ? `${total} selected` : '';
+    elements.dbImportSelectedBtn.disabled = total === 0;
+    elements.dbImportSelectedBtn.textContent = total
+        ? `Import ${total} selected`
+        : 'Import selected';
+}
+
+let dbImportInFlight = false;
+async function performDbImport() {
+    if (dbImportInFlight || dbImport.selected.size === 0) return;
+    dbImportInFlight = true;
+    elements.dbImportSelectedBtn.disabled = true;
+
+    // Preserve the database's own order for the songs being imported.
+    const chosen = [...dbImport.selected].sort((a, b) => a - b).map((i) => dbImport.songs[i]);
+    const source = elements.dbSourceInput.value.trim() || null;
+    try {
+        const result = await importSelectedSongs(chosen, source);
+        const n = result.imported ?? chosen.length;
+        updateStatus(`Imported ${n} song${n !== 1 ? 's' : ''}`);
+        await fetchSongs();
+        openLibraryTab();
+        closeDbImportModal();
+    } catch (error) {
+        const msg = typeof error === 'string' ? error : (error?.message || 'Import failed');
+        updateStatus(msg);
+        console.error('Selected import failed:', error);
+        elements.dbImportSelectedBtn.disabled = false;
+    } finally {
+        dbImportInFlight = false;
+    }
+}
+
+
 let toastTimer = null;
 function updateStatus(message, action = null) {
     // "connected" is just an internal signal that the backend handshake
@@ -1080,6 +1296,7 @@ function openEditModal(song = null) {
     elements.songNumberHint.classList.remove('form-hint-error');
     elements.songKeyInput.value = song?.musical_key || '';
     elements.songAuthorInput.value = song?.author || '';
+    elements.songSourceInput.value = song?.source || '';
 
     if (song) {
         let pasteText = song.title + '\n\n';
@@ -1202,6 +1419,7 @@ async function saveSong() {
         author: elements.songAuthorInput.value.trim() || null,
         musical_key: elements.songKeyInput.value.trim() || null,
         song_number: numberRaw || null,
+        source: elements.songSourceInput.value.trim() || null,
         verses: parsed.verses,
         tags: []
     };
@@ -2480,6 +2698,52 @@ async function scanDuplicates() {
     }
 }
 
+// Batch-assign a source to existing songs from the Library settings panel.
+async function applyBatchSource() {
+    const source = elements.batchSourceInput.value.trim();
+    if (!source) {
+        elements.batchSourceInput.focus();
+        updateStatus('Enter a source name first');
+        return;
+    }
+    const onlyUntagged = elements.batchSourceUntagged.checked;
+    const scopeWord = onlyUntagged ? 'untagged songs' : 'ALL songs';
+    openConfirm({
+        title: 'Set Song Source',
+        message: `Set the source of ${scopeWord} in your library to "${source}"?`,
+        confirmLabel: 'Set Source',
+        onConfirm: async () => {
+            try {
+                elements.applySourceBtn.disabled = true;
+                let updated;
+                if (window.__TAURI__) {
+                    updated = await window.__TAURI__.core.invoke('set_songs_source', {
+                        source,
+                        onlyUntagged,
+                    });
+                } else {
+                    const res = await fetch(`${API_URL}/songs/source`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ source, only_untagged: onlyUntagged }),
+                    });
+                    if (!res.ok) throw new Error('Failed');
+                    updated = (await res.json()).updated;
+                }
+                updateStatus(`Source set on ${updated} song${updated !== 1 ? 's' : ''}`);
+                elements.batchSourceInput.value = '';
+                await fetchSongs();
+                if (state.currentSong?.id != null) await loadSong(state.currentSong.id);
+            } catch (e) {
+                console.error('applyBatchSource:', e);
+                updateStatus('Failed to set source');
+            } finally {
+                elements.applySourceBtn.disabled = false;
+            }
+        },
+    });
+}
+
 async function deleteDuplicate(song) {
     try {
         const res = await fetch(`${API_URL}/songs/${song.id}`, { method: 'DELETE' });
@@ -2532,6 +2796,7 @@ function initSettingsDialog() {
 
     elements.backupNowBtn.addEventListener('click', backupNow);
     elements.scanDuplicatesBtn.addEventListener('click', scanDuplicates);
+    elements.applySourceBtn.addEventListener('click', applyBatchSource);
 
     // --- Display-profile editing target (Songs / Bible) ---
     elements.setDisplayTarget.querySelectorAll('button').forEach(b => {
@@ -2705,6 +2970,7 @@ function initMenuEvents() {
 
     on('menu-new-song', () => openEditModal());
     on('menu-import', () => openImportModal());
+    on('menu-import-database', () => openDbImportModal());
     on('menu-export-json', () => exportSongs('json'));
     on('menu-export-csv', () => exportSongs('csv'));
     on('menu-export-txt', () => exportSongs('txt'));
@@ -2807,6 +3073,65 @@ function initEventListeners() {
     elements.fileInput.addEventListener('change', (e) => {
         importFiles(e.target.files);
     });
+
+    // Import-from-database flow.
+    elements.openDbImportBtn.addEventListener('click', () => {
+        closeImportModal();
+        openDbImportModal();
+    });
+    elements.closeDbImportModal.addEventListener('click', closeDbImportModal);
+    elements.dbCancelBtn.addEventListener('click', closeDbImportModal);
+    elements.dbImportModal.addEventListener('click', (e) => {
+        if (e.target === elements.dbImportModal) closeDbImportModal();
+    });
+    elements.dbChangeFileBtn.addEventListener('click', resetDbBrowser);
+    elements.dbDropZone.addEventListener('click', () => elements.dbFileInput.click());
+    elements.dbDropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        elements.dbDropZone.classList.add('dragover');
+    });
+    elements.dbDropZone.addEventListener('dragleave', () => {
+        elements.dbDropZone.classList.remove('dragover');
+    });
+    elements.dbDropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        elements.dbDropZone.classList.remove('dragover');
+        if (e.dataTransfer.files?.length) openDatabaseFile(e.dataTransfer.files[0]);
+    });
+    elements.dbFileInput.addEventListener('change', (e) => {
+        if (e.target.files?.length) openDatabaseFile(e.target.files[0]);
+    });
+    elements.dbSearchInput.addEventListener('input', (e) => {
+        dbImport.filter = e.target.value;
+        renderDbSongList();
+    });
+    elements.dbSelectAll.addEventListener('change', (e) => {
+        const visible = dbVisibleIndices();
+        if (e.target.checked) {
+            visible.forEach((i) => dbImport.selected.add(i));
+        } else {
+            visible.forEach((i) => dbImport.selected.delete(i));
+        }
+        renderDbSongList();
+    });
+    // Each row is a <label>, so clicking anywhere on it (or the checkbox
+    // itself) toggles the checkbox natively and fires `change` — we just read
+    // the resulting state. Driving it from `change` keeps the checkbox and our
+    // model in sync without fighting the browser's default label behaviour.
+    elements.dbSongList.addEventListener('change', (e) => {
+        const check = e.target.closest('input[type="checkbox"]');
+        const item = e.target.closest('.db-song-item');
+        if (!check || !item) return;
+        const index = Number(item.dataset.index);
+        if (check.checked) {
+            dbImport.selected.add(index);
+        } else {
+            dbImport.selected.delete(index);
+        }
+        item.classList.toggle('selected', check.checked);
+        updateDbSelectionUI();
+    });
+    elements.dbImportSelectedBtn.addEventListener('click', performDbImport);
 
     elements.projectorBtn.addEventListener('click', toggleProjector);
     elements.blankBtn.addEventListener('click', toggleBlank);

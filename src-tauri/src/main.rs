@@ -53,6 +53,40 @@ fn import_songs_from_content(
     })
 }
 
+// Parses another songs database file (JSON/CSV/text) and returns the songs it
+// contains WITHOUT touching the library, so the operator can browse a second
+// database and pick which songs to bring in. Contents come over IPC for the
+// same Windows WebView2 reason as import_songs_from_content.
+#[tauri::command]
+fn preview_import_database(
+    filename: String,
+    content: String,
+) -> Result<Vec<models::Song>, String> {
+    import::parse_songs(&content, &filename)
+}
+
+// Imports a specific set of songs the operator selected from a previewed
+// database. New songs are renumbered to the end of the library and tagged with
+// the given source; exact duplicates are skipped (see import::import_selected).
+#[tauri::command]
+fn import_selected_songs(
+    songs: Vec<models::Song>,
+    source: Option<String>,
+) -> Result<ImportResult, String> {
+    let song_ids = import::import_selected(&songs, source.as_deref())?;
+    Ok(ImportResult {
+        imported: song_ids.len(),
+        song_ids,
+    })
+}
+
+// Batch-assigns a provenance label to existing songs. `only_untagged` limits it
+// to songs that don't have a source yet. Returns how many songs changed.
+#[tauri::command]
+fn set_songs_source(source: Option<String>, only_untagged: Option<bool>) -> Result<usize, String> {
+    songs::set_source(source.as_deref(), only_untagged.unwrap_or(false))
+}
+
 // Opens an http(s) URL in the user's default browser. Used by the
 // check-for-updates flow to send the user to the release download when true
 // in-place updating isn't available. Restricted to http(s) so it can never be
@@ -277,6 +311,9 @@ fn main() {
             close_projector_window,
             send_to_projector,
             import_songs_from_content,
+            preview_import_database,
+            import_selected_songs,
+            set_songs_source,
             save_background_image,
             open_external
         ])
@@ -312,6 +349,10 @@ fn main() {
             let import_item = MenuItemBuilder::with_id("import_songs", "Import Songs…")
                 .accelerator("CmdOrCtrl+I")
                 .build(handle)?;
+            let import_db_item =
+                MenuItemBuilder::with_id("import_database", "Import from Database…")
+                    .accelerator("CmdOrCtrl+Shift+I")
+                    .build(handle)?;
 
             let export_json = MenuItemBuilder::with_id("export_json", "Export as JSON…").build(handle)?;
             let export_csv = MenuItemBuilder::with_id("export_csv", "Export as CSV…").build(handle)?;
@@ -323,6 +364,7 @@ fn main() {
             let file_submenu = SubmenuBuilder::new(handle, "File")
                 .item(&new_song_item)
                 .item(&import_item)
+                .item(&import_db_item)
                 .separator()
                 .item(&export_submenu)
                 .separator()
@@ -390,6 +432,7 @@ fn main() {
                     "check_update" => "menu-check-update",
                     "new_song" => "menu-new-song",
                     "import_songs" => "menu-import",
+                    "import_database" => "menu-import-database",
                     "export_json" => "menu-export-json",
                     "export_csv" => "menu-export-csv",
                     "export_txt" => "menu-export-txt",

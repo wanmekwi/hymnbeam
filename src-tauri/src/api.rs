@@ -15,13 +15,15 @@ use crate::collections::{
 };
 use crate::backgrounds::{read_image, save_image};
 use crate::export::{export_csv, export_json, export_txt};
-use crate::import::{import_file, replace_library};
+use crate::import::{
+    import_file, import_selected as import_selected_songs, parse_songs, replace_library,
+};
 use crate::models::Song;
 use crate::settings::{get_settings, update_settings};
 use crate::backup::{create_backup, list_backups, restore_backup};
 use crate::songs::{
     create_song, delete_song, find_duplicates, find_song_id_by_number, get_all_songs, get_song,
-    list_deleted_songs, restore_song, search_songs, update_song,
+    list_deleted_songs, restore_song, search_songs, set_source, update_song,
 };
 
 #[derive(Serialize)]
@@ -242,6 +244,74 @@ async fn import_songs(
     }
 
     Err(bad_request("No file provided"))
+}
+
+#[derive(Deserialize)]
+struct PreviewBody {
+    #[serde(default = "default_preview_filename")]
+    filename: String,
+    #[serde(default)]
+    content: String,
+}
+
+fn default_preview_filename() -> String {
+    "database.json".to_string()
+}
+
+// Parses another database file and returns its songs without importing. The
+// browser dev fallback for the Tauri preview_import_database command.
+async fn preview_import(
+    Json(body): Json<PreviewBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    parse_songs(&body.content, &body.filename)
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))
+}
+
+#[derive(Deserialize)]
+struct SelectedImportBody {
+    #[serde(default)]
+    songs: Vec<Song>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+// Imports a caller-selected set of songs (renumbered + source-tagged). Browser
+// dev fallback for the Tauri import_selected_songs command.
+async fn import_selected(
+    Json(body): Json<SelectedImportBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    import_selected_songs(&body.songs, body.source.as_deref())
+        .map(|ids| {
+            Json(ImportResponse {
+                imported: ids.len(),
+                song_ids: ids,
+            })
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+#[derive(Deserialize)]
+struct SetSourceBody {
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    only_untagged: bool,
+}
+
+#[derive(Serialize)]
+struct UpdatedResponse {
+    updated: usize,
+}
+
+// Batch-assigns a source to existing songs. Browser dev fallback for the Tauri
+// set_songs_source command.
+async fn set_songs_source_handler(
+    Json(body): Json<SetSourceBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    set_source(body.source.as_deref(), body.only_untagged)
+        .map(|updated| Json(UpdatedResponse { updated }))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
 async fn list_trash() -> Result<impl IntoResponse, StatusCode> {
@@ -531,6 +601,9 @@ pub fn create_router() -> Router {
         .route("/backups", get(get_backups).post(create_backup_handler))
         .route("/backups/{name}/restore", post(restore_backup_handler))
         .route("/import", post(import_songs))
+        .route("/import/preview", post(preview_import))
+        .route("/import/selected", post(import_selected))
+        .route("/songs/source", put(set_songs_source_handler))
         .route("/export", get(export_songs_handler))
         .route("/collections", get(list_collections).post(create_new_collection))
         .route(

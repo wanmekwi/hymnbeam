@@ -15,6 +15,8 @@ struct ExportSong {
     key: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     song_number: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    source: String,
     verses: Vec<ExportVerse>,
 }
 
@@ -25,6 +27,7 @@ struct SongWithVerses {
     author: Option<String>,
     musical_key: Option<String>,
     song_number: Option<String>,
+    source: Option<String>,
     verses: Vec<(String, String)>,
 }
 
@@ -32,12 +35,12 @@ fn get_all_songs_with_verses() -> Result<Vec<SongWithVerses>, String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare("SELECT id, title, author, musical_key, song_number FROM songs WHERE deleted_at IS NULL ORDER BY title")
+        .prepare("SELECT id, title, author, musical_key, song_number, source FROM songs WHERE deleted_at IS NULL ORDER BY title")
         .map_err(|e| e.to_string())?;
 
-    let songs: Vec<(i64, String, Option<String>, Option<String>, Option<String>)> = stmt
+    let songs: Vec<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>)> = stmt
         .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
@@ -45,7 +48,7 @@ fn get_all_songs_with_verses() -> Result<Vec<SongWithVerses>, String> {
 
     let mut result = Vec::new();
 
-    for (id, title, author, musical_key, song_number) in songs {
+    for (id, title, author, musical_key, song_number, source) in songs {
         let mut stmt = conn
             .prepare("SELECT label, text FROM verses WHERE song_id = ?1 ORDER BY position")
             .map_err(|e| e.to_string())?;
@@ -62,6 +65,7 @@ fn get_all_songs_with_verses() -> Result<Vec<SongWithVerses>, String> {
             author,
             musical_key,
             song_number,
+            source,
             verses,
         });
     }
@@ -79,6 +83,7 @@ pub fn export_json() -> Result<String, String> {
             author: s.author.unwrap_or_default(),
             key: s.musical_key.unwrap_or_default(),
             song_number: s.song_number.unwrap_or_default(),
+            source: s.source.unwrap_or_default(),
             verses: s
                 .verses
                 .into_iter()

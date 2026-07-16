@@ -164,6 +164,7 @@ mod tests {
             author: None,
             musical_key: None,
             song_number: None,
+            source: None,
             verses: vec![Verse {
                 id: None,
                 label: "Verse 1".to_string(),

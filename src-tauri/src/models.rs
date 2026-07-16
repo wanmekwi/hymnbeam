@@ -39,6 +39,9 @@ pub struct Song {
     pub musical_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub song_number: Option<String>,
+    // Optional provenance label (e.g. "BCF Scotland"). Set on import or edited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     #[serde(default)]
     pub verses: Vec<Verse>,
     #[serde(default)]
@@ -55,6 +58,8 @@ pub struct SongSummary {
     pub musical_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub song_number: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     pub verse_count: i32,
 }
 
@@ -150,6 +155,9 @@ pub struct ImportedHymn {
         deserialize_with = "deserialize_stringy_optional"
     )]
     pub song_number: Option<String>,
+    // Provenance label, if the file carries one (e.g. from a HymnBeam export).
+    #[serde(default, alias = "source")]
+    pub source: Option<String>,
     #[serde(default)]
     pub verses: Option<Vec<ImportedVerse>>,
     #[serde(default)]

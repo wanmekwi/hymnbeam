@@ -163,6 +163,10 @@ pub fn init_db() -> SqliteResult<()> {
     // out of every read path until restored or purged.
     add_column_if_missing(&conn, "songs", "deleted_at", "TIMESTAMP")?;
 
+    // Provenance: an optional free-text label for where a song came from
+    // (e.g. "BCF Scotland"). Set on import and editable per song or in batch.
+    add_column_if_missing(&conn, "songs", "source", "TEXT")?;
+
     // Order-of-service: setlist entries can be songs, Bible passages or logo slides.
     migrate_setlist_items(&conn)?;
 

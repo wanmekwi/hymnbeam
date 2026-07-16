@@ -39,12 +39,45 @@ pub fn find_song_id_by_number(number: &str) -> Result<Option<i64>, String> {
     }
 }
 
+// The next number to assign when appending a song to the end of the library:
+// one past the highest numeric song_number in use. Non-numeric numbers CAST to
+// 0 in SQLite so they never inflate the max, and trashed rows are ignored.
+// Returns 1 for an empty (or entirely unnumbered) library.
+pub fn next_song_number() -> Result<i64, String> {
+    let conn = get_connection().map_err(|e| e.to_string())?;
+    let max: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(CAST(song_number AS INTEGER)), 0) FROM songs WHERE deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(max + 1)
+}
+
+// Batch-assign a provenance label to live songs. With `only_untagged` true only
+// songs that have no source yet are touched (the "tag my original library"
+// case); otherwise every live song is overwritten. A blank source clears it.
+// Returns how many rows changed.
+pub fn set_source(source: Option<&str>, only_untagged: bool) -> Result<usize, String> {
+    let conn = get_connection().map_err(|e| e.to_string())?;
+    let value = source.map(|s| s.trim()).filter(|s| !s.is_empty());
+    let sql = if only_untagged {
+        "UPDATE songs SET source = ?1, updated_at = CURRENT_TIMESTAMP \
+         WHERE deleted_at IS NULL AND (source IS NULL OR TRIM(source) = '')"
+    } else {
+        "UPDATE songs SET source = ?1, updated_at = CURRENT_TIMESTAMP WHERE deleted_at IS NULL"
+    };
+    let n = conn.execute(sql, params![value]).map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
 pub fn create_song(song: &Song) -> Result<i64, String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
 
     conn.execute(
-        "INSERT INTO songs (title, author, musical_key, song_number) VALUES (?1, ?2, ?3, ?4)",
-        params![song.title, song.author, song.musical_key, song.song_number],
+        "INSERT INTO songs (title, author, musical_key, song_number, source) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![song.title, song.author, song.musical_key, song.song_number, song.source],
     )
     .map_err(|e| e.to_string())?;
 
@@ -94,15 +127,17 @@ pub fn create_song(song: &Song) -> Result<i64, String> {
 pub fn get_song(song_id: i64) -> Result<Option<Song>, String> {
     let conn = get_connection().map_err(|e| e.to_string())?;
 
-    let song_result: Result<(String, Option<String>, Option<String>, Option<String>), _> =
-        conn.query_row(
-            "SELECT title, author, musical_key, song_number FROM songs
+    let song_result: Result<
+        (String, Option<String>, Option<String>, Option<String>, Option<String>),
+        _,
+    > = conn.query_row(
+        "SELECT title, author, musical_key, song_number, source FROM songs
              WHERE id = ?1 AND deleted_at IS NULL",
-            params![song_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        );
+        params![song_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+    );
 
-    let (title, author, musical_key, song_number) = match song_result {
+    let (title, author, musical_key, song_number, source) = match song_result {
         Ok(s) => s,
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
         Err(e) => return Err(e.to_string()),
@@ -143,6 +178,7 @@ pub fn get_song(song_id: i64) -> Result<Option<Song>, String> {
         author,
         musical_key,
         song_number,
+        source,
         verses,
         tags,
     }))
@@ -154,7 +190,7 @@ pub fn get_all_songs(sort_by: &str) -> Result<Vec<SongSummary>, String> {
 
     let query = format!(
         r#"
-        SELECT s.id, s.title, s.author, s.musical_key, s.song_number, COUNT(v.id) as verse_count
+        SELECT s.id, s.title, s.author, s.musical_key, s.song_number, s.source, COUNT(v.id) as verse_count
         FROM songs s
         LEFT JOIN verses v ON s.id = v.song_id
         WHERE s.deleted_at IS NULL
@@ -174,7 +210,8 @@ pub fn get_all_songs(sort_by: &str) -> Result<Vec<SongSummary>, String> {
                 author: row.get(2)?,
                 musical_key: row.get(3)?,
                 song_number: row.get(4)?,
-                verse_count: row.get(5)?,
+                source: row.get(5)?,
+                verse_count: row.get(6)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -191,7 +228,7 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
 
     let fts_query = format!(
         r#"
-        SELECT DISTINCT s.id, s.title, s.author, s.musical_key, s.song_number, COUNT(v.id) as verse_count
+        SELECT DISTINCT s.id, s.title, s.author, s.musical_key, s.song_number, s.source, COUNT(v.id) as verse_count
         FROM songs s
         LEFT JOIN verses v ON s.id = v.song_id
         WHERE s.deleted_at IS NULL AND (s.id IN (
@@ -219,7 +256,8 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
                 author: row.get(2)?,
                 musical_key: row.get(3)?,
                 song_number: row.get(4)?,
-                verse_count: row.get(5)?,
+                source: row.get(5)?,
+                verse_count: row.get(6)?,
             })
         })?;
         rows.collect()
@@ -234,7 +272,7 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
     let like_term = format!("%{}%", query);
     let fallback_query = format!(
         r#"
-        SELECT DISTINCT s.id, s.title, s.author, s.musical_key, s.song_number, COUNT(v.id) as verse_count
+        SELECT DISTINCT s.id, s.title, s.author, s.musical_key, s.song_number, s.source, COUNT(v.id) as verse_count
         FROM songs s
         LEFT JOIN verses v ON s.id = v.song_id
         WHERE s.deleted_at IS NULL AND (s.title LIKE ?1 COLLATE NOCASE
@@ -258,7 +296,8 @@ pub fn search_songs(query: &str, sort_by: &str) -> Result<Vec<SongSummary>, Stri
                 author: row.get(2)?,
                 musical_key: row.get(3)?,
                 song_number: row.get(4)?,
-                verse_count: row.get(5)?,
+                source: row.get(5)?,
+                verse_count: row.get(6)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -273,8 +312,8 @@ pub fn update_song(song_id: i64, song: &Song) -> Result<bool, String> {
 
     let rows_updated = conn
         .execute(
-            "UPDATE songs SET title = ?1, author = ?2, musical_key = ?3, song_number = ?4, updated_at = CURRENT_TIMESTAMP WHERE id = ?5 AND deleted_at IS NULL",
-            params![song.title, song.author, song.musical_key, song.song_number, song_id],
+            "UPDATE songs SET title = ?1, author = ?2, musical_key = ?3, song_number = ?4, source = ?5, updated_at = CURRENT_TIMESTAMP WHERE id = ?6 AND deleted_at IS NULL",
+            params![song.title, song.author, song.musical_key, song.song_number, song.source, song_id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -464,6 +503,7 @@ mod tests {
             author: None,
             musical_key: None,
             song_number: number.map(|n| n.to_string()),
+            source: None,
             verses: verse_texts
                 .iter()
                 .enumerate()
