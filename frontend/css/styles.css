@@ -1869,6 +1869,39 @@ body {
     display: flex;
 }
 
+/* Songs / Bible display-profile switcher at the top of the display tabs. */
+.settings-target-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.bible-target-options {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.toggle-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+/* While Bible mirrors the song settings, its panels show read-only. The target
+   row stays interactive so the "use same as songs" toggle can be turned off. */
+.settings-content.display-locked .settings-panel {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
 .settings-panel .form-group label {
     display: flex;
     justify-content: space-between;
