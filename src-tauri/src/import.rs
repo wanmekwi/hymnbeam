@@ -208,6 +208,7 @@ fn hymn_to_song(hymn: &ImportedHymn) -> Song {
         author: hymn.author.clone().filter(|a| !a.is_empty()),
         musical_key: hymn.musical_key.clone().filter(|k| !k.is_empty()),
         song_number: hymn.song_number.clone().filter(|n| !n.is_empty()),
+        source: hymn.source.clone().filter(|s| !s.trim().is_empty()),
         verses,
         tags,
     }
@@ -288,6 +289,7 @@ fn parse_csv(content: &str) -> Result<Vec<Song>, String> {
             author,
             musical_key: key,
             song_number: number,
+            source: None,
             verses,
             tags: Vec::new(),
         });
@@ -361,6 +363,7 @@ fn parse_text(content: &str) -> Result<Song, String> {
         author,
         musical_key: None,
         song_number: None,
+        source: None,
         verses,
         tags: Vec::new(),
     })
@@ -385,12 +388,19 @@ fn parse_file(content: &str, filename: &str) -> Result<Vec<Song>, String> {
     }
 }
 
-pub fn import_file(content: &str, filename: &str) -> Result<Vec<i64>, String> {
-    let songs = parse_file(content, filename)?;
+// Parse a database file's contents into songs without inserting anything. The
+// "open another database" flow uses this to preview a file the user hasn't
+// committed to, so they can browse it and cherry-pick which songs to import.
+pub fn parse_songs(content: &str, filename: &str) -> Result<Vec<Song>, String> {
+    parse_file(content, filename)
+}
 
+// Insert each song, skipping any whose (title, verse-texts) fingerprint already
+// matches a live song so re-imports never duplicate rows. Shared by the
+// whole-file import and the cherry-pick "import selected" flow.
+pub fn import_songs(songs: &[Song]) -> Result<Vec<i64>, String> {
     let mut song_ids = Vec::new();
-    for song in &songs {
-        // Re-importing the same file shouldn't duplicate rows.
+    for song in songs {
         if let Some(existing_id) = find_existing_song_id(song)? {
             song_ids.push(existing_id);
             continue;
@@ -400,7 +410,43 @@ pub fn import_file(content: &str, filename: &str) -> Result<Vec<i64>, String> {
             Err(e) => eprintln!("Error importing '{}': {}", song.title, e),
         }
     }
+    Ok(song_ids)
+}
 
+pub fn import_file(content: &str, filename: &str) -> Result<Vec<i64>, String> {
+    let songs = parse_file(content, filename)?;
+    import_songs(&songs)
+}
+
+// Cherry-pick import: adds a chosen set of songs to the existing library.
+// Unlike a whole-file import it renumbers each genuinely-new song to the next
+// number at the end of the library (so it never collides with what's already
+// there) and tags it with `source`. Songs that already exist (same title and
+// verses) are skipped and keep their current number and source.
+//
+// `source` — a provenance label typed by the operator. When blank, a song's
+// own parsed source (e.g. from a HymnBeam export) is preserved instead.
+pub fn import_selected(songs: &[Song], source: Option<&str>) -> Result<Vec<i64>, String> {
+    let source = source.map(str::trim).filter(|s| !s.is_empty());
+    let mut next = crate::songs::next_song_number()?;
+
+    let mut song_ids = Vec::new();
+    for song in songs {
+        if let Some(existing_id) = find_existing_song_id(song)? {
+            song_ids.push(existing_id);
+            continue;
+        }
+        let mut to_create = song.clone();
+        to_create.song_number = Some(next.to_string());
+        next += 1;
+        if let Some(src) = source {
+            to_create.source = Some(src.to_string());
+        }
+        match create_song(&to_create) {
+            Ok(id) => song_ids.push(id),
+            Err(e) => eprintln!("Error importing '{}': {}", to_create.title, e),
+        }
+    }
     Ok(song_ids)
 }
 
@@ -467,6 +513,120 @@ mod tests {
         let ids = import_file(json_num, "one.json").expect("import numeric number");
         let song = crate::songs::get_song(ids[0]).unwrap().unwrap();
         assert_eq!(song.song_number.as_deref(), Some("27"));
+    }
+
+    #[test]
+    fn parse_songs_previews_without_inserting_then_imports_selection() {
+        let _db = setup_temp_db();
+
+        let json = r#"[
+            {"number": "1", "title": "First", "lyrics": "one"},
+            {"number": "2", "title": "Second", "lyrics": "two"},
+            {"number": "3", "title": "Third", "lyrics": "three"}
+        ]"#;
+
+        // Previewing must parse every song but leave the library untouched.
+        let previewed = parse_songs(json, "other.json").expect("preview");
+        assert_eq!(previewed.len(), 3);
+        assert!(crate::songs::get_all_songs("title").expect("list").is_empty());
+
+        // Import only a chosen subset.
+        let chosen: Vec<Song> = vec![previewed[0].clone(), previewed[2].clone()];
+        let ids = import_songs(&chosen).expect("import selection");
+        assert_eq!(ids.len(), 2);
+
+        let titles: Vec<String> = crate::songs::get_all_songs("title")
+            .expect("list")
+            .into_iter()
+            .map(|s| s.title)
+            .collect();
+        assert_eq!(titles, vec!["First".to_string(), "Third".to_string()]);
+
+        // Re-importing an already-present song dedupes onto the existing row
+        // rather than creating a duplicate.
+        let ids_again = import_songs(&[previewed[0].clone()]).expect("re-import");
+        assert_eq!(ids_again, vec![ids[0]]);
+        assert_eq!(crate::songs::get_all_songs("title").expect("list").len(), 2);
+    }
+
+    #[test]
+    fn import_selected_renumbers_new_songs_and_tags_source() {
+        let _db = setup_temp_db();
+
+        // Seed a library whose numbers top out at 480.
+        import_file(
+            r#"[{"number": "480", "title": "Existing", "lyrics": "here already"}]"#,
+            "seed.json",
+        )
+        .expect("seed");
+
+        // Cherry-pick two songs whose file numbers (1, 2) would collide with the
+        // low end of a real library. They must be appended as 481, 482 instead,
+        // and tagged with the typed source.
+        let incoming = parse_songs(
+            r#"[
+                {"number": "1", "title": "Alpha", "lyrics": "a"},
+                {"number": "2", "title": "Beta", "lyrics": "b"}
+            ]"#,
+            "other.json",
+        )
+        .expect("parse");
+        let ids = import_selected(&incoming, Some("BCF Scotland")).expect("import selected");
+        assert_eq!(ids.len(), 2);
+
+        let alpha = crate::songs::get_song(ids[0]).unwrap().unwrap();
+        let beta = crate::songs::get_song(ids[1]).unwrap().unwrap();
+        assert_eq!(alpha.song_number.as_deref(), Some("481"));
+        assert_eq!(beta.song_number.as_deref(), Some("482"));
+        assert_eq!(alpha.source.as_deref(), Some("BCF Scotland"));
+        assert_eq!(beta.source.as_deref(), Some("BCF Scotland"));
+
+        // A second source keeps appending — merging never collides.
+        let more = parse_songs(r#"[{"title": "Gamma", "lyrics": "g"}]"#, "more.json").expect("parse");
+        let ids2 = import_selected(&more, Some("Mission Praise")).expect("second source");
+        let gamma = crate::songs::get_song(ids2[0]).unwrap().unwrap();
+        assert_eq!(gamma.song_number.as_deref(), Some("483"));
+        assert_eq!(gamma.source.as_deref(), Some("Mission Praise"));
+
+        // A blank source keeps a song's own parsed source rather than clearing it.
+        let exported = parse_songs(
+            r#"[{"title": "Delta", "lyrics": "d", "source": "From File"}]"#,
+            "exp.json",
+        )
+        .expect("parse");
+        let ids3 = import_selected(&exported, Some("   ")).expect("blank source");
+        let delta = crate::songs::get_song(ids3[0]).unwrap().unwrap();
+        assert_eq!(delta.source.as_deref(), Some("From File"));
+
+        // Re-selecting an existing song dedupes and leaves its number untouched.
+        let dup = import_selected(&incoming, Some("Ignored")).expect("dup");
+        assert_eq!(dup, ids);
+        assert_eq!(crate::songs::get_song(ids[0]).unwrap().unwrap().source.as_deref(), Some("BCF Scotland"));
+    }
+
+    #[test]
+    fn set_source_batch_tags_untagged_or_all() {
+        let _db = setup_temp_db();
+        import_file(
+            r#"[{"title": "One", "lyrics": "x"}, {"title": "Two", "lyrics": "y"}]"#,
+            "seed.json",
+        )
+        .expect("seed");
+
+        // Tag everything untagged.
+        let n = crate::songs::set_source(Some("BCF Scotland"), true).expect("batch");
+        assert_eq!(n, 2);
+
+        // Re-running only-untagged now touches nothing.
+        let n2 = crate::songs::set_source(Some("Other"), true).expect("batch2");
+        assert_eq!(n2, 0);
+
+        // Overwriting all replaces regardless of existing value.
+        let n3 = crate::songs::set_source(Some("Everywhere"), false).expect("batch3");
+        assert_eq!(n3, 2);
+        for s in crate::songs::get_all_songs("title").unwrap() {
+            assert_eq!(s.source.as_deref(), Some("Everywhere"));
+        }
     }
 
     #[test]

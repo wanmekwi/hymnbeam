@@ -1005,6 +1005,262 @@ body {
     color: var(--text-muted);
 }
 
+/* Inline text button (used to jump to the database-import flow) */
+.btn-link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.btn-link:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+
+.import-alt {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+}
+
+/* Import-from-database browser. These override the [hidden] attribute's
+   default display:none, so restore it explicitly when hidden. */
+.drop-zone[hidden],
+.db-browser[hidden],
+.modal-footer[hidden] {
+    display: none;
+}
+
+.modal-footer {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+}
+
+.modal-footer-actions {
+    display: flex;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.db-source-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+    max-width: 320px;
+}
+
+.db-source-field label {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.db-source-field input {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.db-source-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.song-source {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+/* Batch source assignment (Library settings) */
+.source-batch {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.source-batch input[type="text"] {
+    flex: 1;
+    min-width: 160px;
+    padding: 8px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.source-batch input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.batch-source-scope {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.batch-source-scope input[type="checkbox"] {
+    accent-color: var(--accent);
+}
+
+.db-browser {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+}
+
+.db-browser-bar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.db-source {
+    font-size: 13px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.db-source strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.db-browser-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.db-selectall {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.db-selectall input[type="checkbox"] {
+    accent-color: var(--accent);
+}
+
+.db-selected-count {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.db-song-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 46vh;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.db-song-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.db-song-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.db-song-item.selected {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+}
+
+.db-song-item input[type="checkbox"] {
+    margin-top: 3px;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+}
+
+.db-song-info {
+    min-width: 0;
+    flex: 1;
+}
+
+.db-song-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.db-song-header .num {
+    font-size: 12px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}
+
+.db-song-header .title {
+    font-size: 14px;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.db-song-header .key {
+    font-size: 11px;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0 6px;
+}
+
+.db-song-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.db-browser-empty {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 24px 0;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
     width: 8px;

@@ -256,6 +256,7 @@
                         <div class="song-meta">
                             <h1 class="song-title" id="displayTitle"></h1>
                             <p class="song-author" id="displayAuthor"></p>
+                            <p class="song-source" id="displaySource" hidden></p>
                         </div>
                         <div class="preview-area">
                             <button type="button" class="preview-layout-toggle" id="previewLayoutToggle" aria-label="Toggle preview layout"></button>
@@ -381,6 +382,64 @@
                         <small>Deletes all current songs before importing</small>
                     </span>
                 </label>
+                <div class="import-alt">
+                    <button type="button" class="btn-link" id="openDbImportBtn">
+                        Pick individual songs from another database →
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="dbImportModal">
+        <div class="modal modal-large">
+            <div class="modal-header">
+                <h2>Import from Database</h2>
+                <button class="btn btn-icon modal-close" id="closeDbImportModal" title="Close" aria-label="Close modal">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M5 5l10 10M15 5L5 15"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Step 1: choose a database file to browse -->
+                <div class="drop-zone" id="dbDropZone">
+                    <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <ellipse cx="24" cy="12" rx="14" ry="5"/>
+                        <path d="M10 12v12c0 2.8 6.3 5 14 5s14-2.2 14-5V12"/>
+                        <path d="M10 24v12c0 2.8 6.3 5 14 5s14-2.2 14-5V24"/>
+                    </svg>
+                    <p>Open another songs database</p>
+                    <span>Browse a JSON, CSV, or text file and pick songs to import</span>
+                    <input type="file" id="dbFileInput" accept=".json,.csv,.txt,.text" hidden>
+                </div>
+
+                <!-- Step 2: browse & select songs from the opened database -->
+                <div class="db-browser" id="dbBrowser" hidden>
+                    <div class="db-browser-bar">
+                        <div class="db-source" id="dbSourceInfo"></div>
+                        <button type="button" class="btn-link" id="dbChangeFileBtn">Open a different file</button>
+                    </div>
+                    <input type="search" class="search-input" id="dbSearchInput" placeholder="Search these songs…">
+                    <div class="db-browser-toolbar">
+                        <label class="db-selectall">
+                            <input type="checkbox" id="dbSelectAll">
+                            <span id="dbSelectAllLabel">Select all</span>
+                        </label>
+                        <span class="db-selected-count" id="dbSelectedCount"></span>
+                    </div>
+                    <div class="db-song-list" id="dbSongList"></div>
+                </div>
+            </div>
+            <div class="modal-footer" id="dbImportFooter" hidden>
+                <div class="db-source-field">
+                    <label for="dbSourceInput">Source</label>
+                    <input type="text" id="dbSourceInput" maxlength="80" placeholder="e.g. BCF Scotland (optional)">
+                </div>
+                <div class="modal-footer-actions">
+                    <button type="button" class="btn btn-secondary" id="dbCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="dbImportSelectedBtn" disabled>Import selected</button>
+                </div>
             </div>
         </div>
     </div>
@@ -412,7 +471,12 @@
                             <input type="text" id="songAuthorInput" placeholder="Composer name">
                         </div>
                     </div>
-                    
+
+                    <div class="form-group">
+                        <label for="songSourceInput">Source</label>
+                        <input type="text" id="songSourceInput" maxlength="80" placeholder="Where this song came from, e.g. BCF Scotland (optional)">
+                    </div>
+
                     <div class="form-group">
                         <label for="songPasteInput">Song lyrics</label>
                         <textarea id="songPasteInput" class="song-paste-area" placeholder="Song Title
@@ -653,6 +717,21 @@ Second verse lyrics..."></textarea>
                             </div>
                             <span class="form-hint">Finds songs sharing the same title. Deleting a copy moves it to Recently Deleted, so it can be undone.</span>
                             <ul class="library-list" id="duplicateList"></ul>
+                        </div>
+
+                        <div class="library-section">
+                            <div class="library-section-header">
+                                <h3>Song Source</h3>
+                            </div>
+                            <span class="form-hint">Tag songs with where they came from (e.g. your original hymnal). Useful after importing from other databases.</span>
+                            <div class="source-batch">
+                                <input type="text" id="batchSourceInput" maxlength="80" placeholder="Source name, e.g. BCF Scotland">
+                                <label class="batch-source-scope">
+                                    <input type="checkbox" id="batchSourceUntagged" checked>
+                                    <span>Only songs without a source yet</span>
+                                </label>
+                                <button type="button" class="btn btn-secondary btn-small" id="applySourceBtn">Apply to library</button>
+                            </div>
                         </div>
                     </div>
                 </div>

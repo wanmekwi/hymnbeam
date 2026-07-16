@@ -210,6 +210,7 @@ mod tests {
             author: Some("Composer".to_string()),
             musical_key: Some("G".to_string()),
             song_number: None,
+            source: None,
             verses: Vec::new(),
             tags: Vec::new(),
         }
