@@ -161,6 +161,66 @@ jobs:
           path: src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
 
+  # The Homebrew cask lives in a *separate* repo, so the release commit can't
+  # touch it and it was historically bumped by hand. That step was missed for
+  # both v0.2.2 and v0.3.0, leaving `brew upgrade --cask hymnbeam` two releases
+  # behind for months. This job does it from the DMG that was just published.
+  #
+  # Requires HOMEBREW_TAP_TOKEN: a fine-grained PAT with Contents: read & write
+  # on wanmekwi/homebrew-hymnbeam. Until that secret exists the job warns and
+  # succeeds, mirroring how the updater-signing steps stay inert.
+  update-homebrew-cask:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-macos]
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+    steps:
+      - name: Bump cask to the released DMG
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN not set — cask NOT bumped. Update Casks/hymnbeam.rb by hand."
+            exit 0
+          fi
+
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          DMG="HymnBeam_${VERSION}_universal.dmg"
+
+          # Hash the asset as served by the very URL the cask template builds,
+          # rather than trusting release metadata — a wrong sha256 here breaks
+          # `brew install` for everyone, so it must match what users fetch.
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${DMG}"
+          curl -sSfL -o "$DMG" "$URL"
+          SHA=$(sha256sum "$DMG" | cut -d' ' -f1)
+          echo "sha256(${DMG}) = ${SHA}"
+
+          git clone --depth 1 \
+            "https://x-access-token:${TAP_TOKEN}@github.com/wanmekwi/homebrew-hymnbeam.git" tap
+          cd tap
+          sed -i -E "s|^  version \".*\"|  version \"${VERSION}\"|" Casks/hymnbeam.rb
+          sed -i -E "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" Casks/hymnbeam.rb
+
+          # Re-running a tag (or a manual bump that already landed) is a no-op
+          # rather than an empty-commit failure.
+          if git diff --quiet; then
+            echo "Cask already at ${VERSION}; nothing to do."
+            exit 0
+          fi
+
+          # Fail loudly if the substitution didn't take — a silently unchanged
+          # version would ship a sha that doesn't match its own url.
+          grep -qF "version \"${VERSION}\"" Casks/hymnbeam.rb
+          grep -qF "sha256 \"${SHA}\"" Casks/hymnbeam.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -aqm "hymnbeam ${VERSION}"
+          git push -q origin HEAD
+          echo "Cask bumped to ${VERSION}."
+
   # Runs after both installers are attached: writes the release body from the
   # install-instructions template plus the auto-generated changelog. Done once
   # here (rather than generate_release_notes on each upload step) so the two
