@@ -161,6 +161,53 @@ jobs:
           path: src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
 
+  # A non-empty `pubkey` in tauri.conf.json means shipped clients verify update
+  # signatures, but the artifacts they verify are only built when the signing
+  # secret exists. Those two live in different places (config vs repo secrets),
+  # so they drifted: the pubkey was activated in eeab48c (2026-07-12) and
+  # TAURI_SIGNING_PRIVATE_KEY was never added, leaving v0.2.1 → v0.4.0 polling a
+  # latest.json that 404s. Nothing failed, so nobody noticed for four releases.
+  #
+  # This job makes that state loud. It gates nothing — the builds and uploads
+  # still run and the release still ships — but the run goes red until config
+  # and secrets agree, and it goes green the moment they do.
+  updater-consistency:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Pubkey and signing secret must agree
+        run: |
+          set -euo pipefail
+          PUBKEY=$(jq -r '.plugins.updater.pubkey // ""' src-tauri/tauri.conf.json)
+
+          if [ -n "$PUBKEY" ] && [ -z "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
+            echo "::error::Updater is half-activated: tauri.conf.json ships a pubkey, but the"
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is unset. No updater artifacts and no"
+            echo "::error::latest.json will be produced, so every client's update check 404s and"
+            echo "::error::silently falls back to a browser download. Add the secret (and"
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY_PASSWORD), or clear the pubkey to go dormant."
+            exit 1
+          fi
+
+          if [ -z "$PUBKEY" ] && [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
+            echo "::error::Signing key is set but tauri.conf.json has an empty pubkey, so clients"
+            echo "::error::cannot verify the signed artifacts this build produces. Paste the public"
+            echo "::error::key into plugins.updater.pubkey."
+            exit 1
+          fi
+
+          if [ -z "$PUBKEY" ]; then
+            echo "Updater dormant by design (no pubkey, no signing key). Nothing to check."
+          else
+            echo "Updater active: pubkey present and signing key configured."
+          fi
+
   # The Homebrew cask lives in a *separate* repo, so the release commit can't
   # touch it and it was historically bumped by hand. That step was missed for
   # both v0.2.2 and v0.3.0, leaving `brew upgrade --cask hymnbeam` two releases
