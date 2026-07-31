@@ -39,12 +39,22 @@ steps below:
   `tryPluginAutoUpdate()`'s `process.relaunch()` works once the updater is live
   (step 5 below is already done).
 
-## What's left to activate (all yours)
+## Status: ACTIVATED 2026-07-31
 
-Only three things remain, and all involve the signing key, which must never pass
-through anyone else: **(1)** generate the key (step 1), **(2)** add the two CI
-secrets (step 2), **(3)** paste the public key into `tauri.conf.json` (step 3).
-Steps 4 and 5 are already implemented.
+All five steps are done. Steps 1 and 3 were completed on 2026-07-12 (`eeab48c`),
+but step 2 was only half-done — `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` went in and
+`TAURI_SIGNING_PRIVATE_KEY` did not. Because every updater step is guarded on the
+key, that failed silently: v0.2.1 → v0.4.0 shipped with a working pubkey to an
+endpoint that returned 404, and each client fell back to the browser download
+without complaint. The missing secret was added on 2026-07-31.
+
+To stop that recurring, `.github/workflows/release.yml` has an
+`updater-consistency` job that fails the run whenever the pubkey and the signing
+secret disagree in either direction. It gates nothing, so a release still ships;
+the run just goes red instead of quietly producing a dead updater.
+
+The steps below are kept as a record of what was done, and as the procedure to
+follow if the key is ever rotated.
 
 ## Activation steps
 
@@ -122,11 +132,13 @@ relaunches the app itself, so relaunch mostly matters for macOS.
 
 ## Important caveats
 
-- **Only works from the next release onward.** A user must already be running a
-  build that has updater artifacts + the pubkey to receive an update. 0.1.9
-  (this release) predates that, so 0.1.9 → 0.2.0 will still use the browser-
-  download fallback; 0.2.0 → 0.3.0 is the first true self-update. Ship the
-  activation in a normal release and it takes effect one release later.
+- **Clients need the pubkey; they have it since v0.2.1.** To receive an in-place
+  update a user must be running a build that carries the pubkey — not one that
+  carried updater artifacts. Every release from v0.2.1 onward has it, so the
+  first release published with a `latest.json` is immediately self-updatable
+  *from* v0.2.1+. (This note previously said activation takes effect "one release
+  later"; that was written before the pubkey shipped and no longer applies.)
+  Anyone still on v0.2.0 or earlier keeps the browser-download fallback.
 - **macOS unsigned-app interaction.** The updater replaces `HymnBeam.app` in
   place. Because the app is not yet notarized, the replaced bundle can inherit a
   quarantine flag and hit Gatekeeper on relaunch. Notarizing the app (Apple
