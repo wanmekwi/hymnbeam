@@ -84,23 +84,60 @@ The companion website **[vsb.bibeltroen.no](https://vsb.bibeltroen.no)** lets yo
 
 ## Keyboard Shortcuts
 
+Press `?` in the operator window (or **View → Keyboard Shortcuts**) for this list
+without leaving the app. On Windows, `⌘` below is `Ctrl`.
+
+**During the service**
+
 | Key | Action |
 |-----|--------|
 | `→` / `←` | Next / previous verse |
-| `Space` | Blank / unblank screen |
-| `L` | Show / hide logo slide |
 | `1`–`9` | Jump to verse 1–9 |
 | `0` | Jump to verse 10 |
-| `Escape` | Clear display |
-| `F` | Focus projector window |
-| `⌘,` | Display settings |
+| `PgDn` / `PgUp` | Next / previous item in the open collection |
+| `.` / `,` | Same, without reaching for the page keys |
+| `Space` | Blank / unblank screen |
+| `L` | Show / hide logo slide |
+| `Escape` | Close dialog, clear alert, or clear display — in that order |
+
+**Projector**
+
+| Key | Action |
+|-----|--------|
+| `P` | Open / close projector |
+| `F` | Open projector (never closes it, so a stray press can't kill the output) |
+| `⌘⇧P` | Open / close projector |
+| `⌘B` | Blank screen |
+| `⌘L` | Show / hide logo slide |
+
+**Alerts**
+
+| Key | Action |
+|-----|--------|
+| `A` | Open the alert box |
+| `⇧A` | Clear the alert on screen |
+
+**Getting around**
+
+| Key | Action |
+|-----|--------|
+| `/` | Search the song library |
+| `⌃1` / `⌃2` / `⌃3` | Library / Collections / Bible tab |
+| `[` / `]` | Previous / next sidebar tab |
+| `?` | Show the shortcut list |
+
+**Library**
+
+| Key | Action |
+|-----|--------|
 | `⌘N` | New song |
 | `⌘E` | Edit selected song |
 | `⌘⌫` | Delete selected song |
 | `⌘I` | Import songs |
-| `⌘⇧P` | Open / close projector |
-| `⌘B` | Blank screen |
-| `⌘L` | Show / hide logo slide |
+| `⌘⇧I` | Import from database |
+| `⌘,` | Display settings |
+
+Single-key shortcuts are ignored while you are typing in a search or text field.
 
 ---
 

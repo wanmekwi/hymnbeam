@@ -188,6 +188,9 @@ const elements = {
     checkUpdateBtn: document.getElementById('checkUpdateBtn'),
     updateStatus: document.getElementById('updateStatus'),
     updateAction: document.getElementById('updateAction'),
+    shortcutsModal: document.getElementById('shortcutsModal'),
+    closeShortcutsModal: document.getElementById('closeShortcutsModal'),
+    shortcutsGroups: document.getElementById('shortcutsGroups'),
     settingsBtn: document.getElementById('settingsBtn'),
     settingsModal: document.getElementById('settingsModal'),
     closeSettingsModal: document.getElementById('closeSettingsModal'),
@@ -706,29 +709,39 @@ async function sendToProjector() {
 }
 
 
+// Single source of truth for the header button's label and icon, so the four
+// places that can change projector state (open, close, the browser fallback,
+// and the projector-closed event) can never disagree about what it says.
+function setProjectorButton(open) {
+    elements.projectorBtn.innerHTML = open
+        ? `
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M5 5l10 10M15 5L5 15"/>
+            </svg>
+            Close Projector
+        `
+        : `
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="2" y="4" width="16" height="10" rx="1"/>
+                <path d="M6 17h8"/>
+                <path d="M10 14v3"/>
+            </svg>
+            Open Projector
+        `;
+}
+
+
 async function toggleProjector() {
     try {
         if (window.__TAURI__) {
             if (state.projectorOpen) {
                 await window.__TAURI__.core.invoke('close_projector_window');
                 state.projectorOpen = false;
-                elements.projectorBtn.innerHTML = `
-                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <rect x="2" y="4" width="16" height="10" rx="1"/>
-                        <path d="M6 17h8"/>
-                        <path d="M10 14v3"/>
-                    </svg>
-                    Open Projector
-                `;
+                setProjectorButton(false);
             } else {
                 await window.__TAURI__.core.invoke('open_projector_window');
                 state.projectorOpen = true;
-                elements.projectorBtn.innerHTML = `
-                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M5 5l10 10M15 5L5 15"/>
-                    </svg>
-                    Close Projector
-                `;
+                setProjectorButton(true);
                 setTimeout(() => {
                     sendToProjector();
                     pushSettingsToProjector();
@@ -736,12 +749,21 @@ async function toggleProjector() {
                     resendAlertState();
                 }, 500);
             }
+        } else if (state.projectorOpen && window.projectorWindow) {
+            // Browser fallback (dev only — the shipped app always has Tauri).
+            // This branch used to open unconditionally, so the toggle was
+            // one-way outside Tauri.
+            window.projectorWindow.close();
+            window.projectorWindow = null;
+            state.projectorOpen = false;
+            setProjectorButton(false);
         } else {
             const projectorWindow = window.open('projector.html', 'projector',
                 'width=1280,height=720,menubar=no,toolbar=no');
             if (projectorWindow) {
                 state.projectorOpen = true;
                 window.projectorWindow = projectorWindow;
+                setProjectorButton(true);
             }
         }
     } catch (error) {
@@ -1593,6 +1615,152 @@ function closeAboutModal() {
 }
 
 
+// ----- Keyboard shortcuts reference -----
+
+// Modifier glyphs. macOS gets the symbols people expect on that platform;
+// everywhere else spells them out. The chords themselves come from the native
+// menu, which registers them as CmdOrCtrl — so the same table describes both.
+const KEY_GLYPHS = navigator.userAgent.includes('Mac')
+    ? { mod: '⌘', shift: '⇧', ctrl: '⌃', backspace: '⌫' }
+    : { mod: 'Ctrl+', shift: 'Shift+', ctrl: 'Ctrl+', backspace: 'Backspace' };
+
+// Every key in a `keys` entry renders as its own <kbd>; a `/` between two of
+// them renders as a plain separator ("this or that"). `{mod}` and friends are
+// substituted from KEY_GLYPHS above.
+const SHORTCUT_GROUPS = [
+    {
+        title: 'During the service',
+        items: [
+            { keys: ['→', '/', '←'], action: 'Next / previous verse' },
+            { keys: ['1'], action: 'Jump to verse 1–9' , label: '1–9' },
+            { keys: ['0'], action: 'Jump to verse 10' },
+            { keys: ['PgDn', '/', 'PgUp'], action: 'Next / previous item in the open collection' },
+            { keys: ['.', '/', ','], action: 'Same, without reaching for the page keys' },
+            { keys: ['Space'], action: 'Blank / unblank screen' },
+            { keys: ['L'], action: 'Show / hide logo slide' },
+            { keys: ['Esc'], action: 'Close dialog, clear alert, or clear display' },
+        ],
+    },
+    {
+        title: 'Projector',
+        items: [
+            { keys: ['P'], action: 'Open / close projector' },
+            { keys: ['F'], action: 'Open projector (never closes it)' },
+            { keys: ['{mod}{shift}P'], action: 'Open / close projector' },
+            { keys: ['{mod}B'], action: 'Blank screen' },
+            { keys: ['{mod}L'], action: 'Show / hide logo slide' },
+        ],
+    },
+    {
+        title: 'Alerts',
+        items: [
+            { keys: ['A'], action: 'Open the alert box' },
+            { keys: ['{shift}A'], action: 'Clear the alert on screen' },
+        ],
+    },
+    {
+        title: 'Getting around',
+        items: [
+            { keys: ['/'], action: 'Search the song library', literalSlash: true },
+            { keys: ['{ctrl}1', '/', '{ctrl}2', '/', '{ctrl}3'], action: 'Library / Collections / Bible tab' },
+            { keys: ['[', '/', ']'], action: 'Previous / next sidebar tab' },
+            { keys: ['?'], action: 'Show this list' },
+        ],
+    },
+    {
+        title: 'Library',
+        items: [
+            { keys: ['{mod}N'], action: 'New song' },
+            { keys: ['{mod}E'], action: 'Edit selected song' },
+            { keys: ['{mod}{backspace}'], action: 'Delete selected song' },
+            { keys: ['{mod}I'], action: 'Import songs' },
+            { keys: ['{mod}{shift}I'], action: 'Import from database' },
+            { keys: ['{mod},'], action: 'Display settings' },
+        ],
+    },
+];
+
+function formatShortcutKey(key) {
+    return key.replace(/\{(\w+)\}/g, (_, name) => KEY_GLYPHS[name] ?? '');
+}
+
+function renderShortcutsList() {
+    elements.shortcutsGroups.innerHTML = SHORTCUT_GROUPS.map(group => `
+        <div class="shortcuts-group">
+            <div class="shortcuts-group-title">${group.title}</div>
+            ${group.items.map(item => `
+                <div class="shortcut-row">
+                    <span class="shortcut-action">${escapeHtml(item.action)}</span>
+                    <span class="shortcut-keys">${item.keys.map(key =>
+                        // A bare "/" separates alternatives, unless the row is
+                        // documenting the slash key itself.
+                        key === '/' && !item.literalSlash
+                            ? '<span class="shortcut-sep">/</span>'
+                            : `<kbd>${escapeHtml(item.label ?? formatShortcutKey(key))}</kbd>`
+                    ).join('')}</span>
+                </div>
+            `).join('')}
+        </div>
+    `).join('');
+}
+
+function openShortcutsModal() {
+    renderShortcutsList();
+    elements.shortcutsModal.classList.add('active');
+}
+
+
+function closeShortcutsModal() {
+    elements.shortcutsModal.classList.remove('active');
+}
+
+
+// Which dialogs Escape may dismiss, and how. `editModal` is deliberately absent:
+// it holds unsaved lyrics, so Cancel and Save stay the only ways out of it.
+// Anything listed here is closed through its own function rather than by
+// stripping .active, so per-modal cleanup still runs.
+const ESCAPE_CLOSERS = {
+    shortcutsModal: () => closeShortcutsModal(),
+    settingsModal: () => closeSettingsModal(),
+    aboutModal: () => closeAboutModal(),
+    confirmModal: () => closeDeleteConfirm(),
+    importModal: () => closeImportModal(),
+    dbImportModal: () => closeDbImportModal(),
+};
+
+// Topmost open dialog, or null. Later in document order wins, which matches the
+// stacking the operator sees.
+function getOpenModal() {
+    const open = document.querySelectorAll('.modal-overlay.active');
+    return open.length ? open[open.length - 1] : null;
+}
+
+// Escape peels off one layer at a time — dialog, then popover, then the alert
+// banner, and only then the projected slide. Clearing the display is the most
+// destructive of those, so it must never be what a stray Escape does while
+// something else is on screen.
+function handleEscape() {
+    const modal = getOpenModal();
+    if (modal) {
+        const close = ESCAPE_CLOSERS[modal.id];
+        if (close) close();
+        return;
+    }
+    if (elements.alertPopover.classList.contains('open')) {
+        closeAlertPopover();
+        return;
+    }
+    if (alertActive) {
+        clearAlert();
+        return;
+    }
+    state.currentSong = null;
+    state.currentVerseIndex = 0;
+    renderSongDisplay();
+    renderSongList();
+}
+
+
 // ----- App updates -----
 
 const UPDATE_REPO = 'wanmekwi/hymnbeam';
@@ -2206,6 +2374,41 @@ function openCollectionsTab() {
     document.getElementById('collectionsPanel').classList.remove('hidden');
     document.getElementById('libraryTabBtn').classList.remove('active');
     document.getElementById('collectionsTabBtn').classList.add('active');
+}
+
+
+// Opening the Collections tab also has to refresh the list and restore whatever
+// collection was open. Both the tab button and the keyboard shortcuts go
+// through here so they can never drift apart.
+async function activateCollectionsTab() {
+    openCollectionsTab();
+    await fetchCollections();
+    if (state.openCollection?.id != null) {
+        await openCollectionDetail(state.openCollection.id, { showView: false });
+    }
+}
+
+
+// Sidebar tab order, left to right — drives both the direct (Ctrl+1/2/3) and
+// the cycling ([ / ]) shortcuts. openBibleTab lives in bible.js, which loads
+// after this file; it is only referenced at keypress time so that is fine.
+const SIDEBAR_TABS = [
+    { id: 'libraryTabBtn', open: () => openLibraryTab() },
+    { id: 'collectionsTabBtn', open: () => activateCollectionsTab() },
+    { id: 'bibleTabBtn', open: () => openBibleTab() },
+];
+
+function selectSidebarTab(index) {
+    const tab = SIDEBAR_TABS[index];
+    if (tab) tab.open();
+}
+
+function cycleSidebarTab(direction) {
+    const current = SIDEBAR_TABS.findIndex(
+        t => document.getElementById(t.id).classList.contains('active'));
+    const from = current === -1 ? 0 : current;
+    // Wrap, so [ and ] keep working at either end of the row.
+    selectSidebarTab((from + direction + SIDEBAR_TABS.length) % SIDEBAR_TABS.length);
 }
 
 
@@ -2985,6 +3188,7 @@ function initMenuEvents() {
     on('menu-toggle-projector', () => toggleProjector());
     on('menu-blank-screen', () => toggleBlank());
     on('menu-toggle-logo', () => toggleLogo());
+    on('menu-shortcuts', () => openShortcutsModal());
     on('menu-check-update', () => {
         openAboutModal();
         checkForUpdates();
@@ -2994,14 +3198,7 @@ function initMenuEvents() {
         // The alert died with the projector window — reset the operator's
         // "live" indicator so it doesn't falsely claim an alert is up.
         clearAlert();
-        elements.projectorBtn.innerHTML = `
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="2" y="4" width="16" height="10" rx="1"/>
-                <path d="M6 17h8"/>
-                <path d="M10 14v3"/>
-            </svg>
-            Open Projector
-        `;
+        setProjectorButton(false);
     });
 }
 
@@ -3055,6 +3252,11 @@ function initEventListeners() {
     elements.closeAboutModal.addEventListener('click', closeAboutModal);
     elements.aboutModal.addEventListener('click', (e) => {
         if (e.target === elements.aboutModal) closeAboutModal();
+    });
+
+    elements.closeShortcutsModal.addEventListener('click', closeShortcutsModal);
+    elements.shortcutsModal.addEventListener('click', (e) => {
+        if (e.target === elements.shortcutsModal) closeShortcutsModal();
     });
 
     elements.dropZone.addEventListener('click', () => elements.fileInput.click());
@@ -3196,8 +3398,45 @@ function initEventListeners() {
         });
     });
 
+    // Global operator shortcuts. Three rules keep this predictable mid-service:
+    //
+    //   1. Typing always wins — anything aimed at a field bails out early.
+    //   2. Modifier chords bail out too, so the native menu accelerators
+    //      (⌘⇧P, ⌘B, ⌘L …) stay the sole owners of their combinations and can
+    //      never double-fire against a plain key here. Ctrl+digit is the one
+    //      deliberate exception and is handled before that check.
+    //   3. Escape unwinds one layer at a time rather than always clearing the
+    //      display — see handleEscape().
     document.addEventListener('keydown', (e) => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        const target = e.target;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+            // Escape is the way back out of a field the operator tabbed into.
+            if (e.key === 'Escape') {
+                target.blur();
+                closeAlertPopover();
+            }
+            return;
+        }
+
+        // Ctrl+1/2/3 jump straight to a sidebar tab. Deliberately a chord so it
+        // doesn't collide with the bare digits that jump between verses.
+        if (e.ctrlKey && !e.metaKey && !e.altKey && ['1', '2', '3'].includes(e.key)) {
+            e.preventDefault();
+            selectSidebarTab(parseInt(e.key, 10) - 1);
+            return;
+        }
+
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            handleEscape();
+            return;
+        }
+
+        // A dialog owns the keyboard while it is up; Escape (above) is the only
+        // shortcut that reaches past it.
+        if (getOpenModal()) return;
 
         switch (e.key) {
             case 'ArrowRight':
@@ -3210,11 +3449,19 @@ function initEventListeners() {
                 e.preventDefault();
                 toggleBlank();
                 break;
-            case 'Escape':
-                state.currentSong = null;
-                state.currentVerseIndex = 0;
-                renderSongDisplay();
-                renderSongList();
+            // Order of service: step through the open collection. The page keys
+            // are the obvious pairing for a presenter remote, which usually
+            // sends PageUp/PageDown; . and , are the same thing under the
+            // fingers already resting on the arrow keys.
+            case 'PageDown':
+            case '.':
+                e.preventDefault();
+                navigateCollection(1);
+                break;
+            case 'PageUp':
+            case ',':
+                e.preventDefault();
+                navigateCollection(-1);
                 break;
             case '1': case '2': case '3': case '4': case '5':
             case '6': case '7': case '8': case '9':
@@ -3224,26 +3471,50 @@ function initEventListeners() {
                 // 0 jumps to the 10th verse, matching the common tab-switcher convention.
                 jumpToVerse(9);
                 break;
+            case 'p':
+            case 'P':
+                toggleProjector();
+                break;
             case 'f':
             case 'F':
+                // Deliberately open-only: F is the "make sure output is live"
+                // key, so a stray press can never kill the projection.
                 if (!state.projectorOpen) toggleProjector();
                 break;
             case 'l':
             case 'L':
                 toggleLogo();
                 break;
+            case 'a':
+                if (!elements.alertPopover.classList.contains('open')) toggleAlertPopover();
+                break;
+            case 'A':
+                // Shift+A — pull a live alert off the screen without hunting
+                // for the popover's Clear button.
+                clearAlert();
+                break;
+            case '/':
+                e.preventDefault();
+                openLibraryTab();
+                elements.searchInput.focus();
+                elements.searchInput.select();
+                break;
+            case '?':
+                e.preventDefault();
+                openShortcutsModal();
+                break;
+            case '[':
+                cycleSidebarTab(-1);
+                break;
+            case ']':
+                cycleSidebarTab(1);
+                break;
         }
     });
 
     // Sidebar tabs
     document.getElementById('libraryTabBtn').addEventListener('click', openLibraryTab);
-    document.getElementById('collectionsTabBtn').addEventListener('click', async () => {
-        openCollectionsTab();
-        await fetchCollections();
-        if (state.openCollection?.id != null) {
-            await openCollectionDetail(state.openCollection.id, { showView: false });
-        }
-    });
+    document.getElementById('collectionsTabBtn').addEventListener('click', activateCollectionsTab);
 
     // Collection list - create new collection but stay in library so user can add songs
     document.getElementById('newCollectionBtn').addEventListener('click', async () => {

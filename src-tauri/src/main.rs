@@ -401,10 +401,18 @@ fn main() {
                 .accelerator("CmdOrCtrl+L")
                 .build(handle)?;
 
+            // Nothing else advertises the single-key operator shortcuts, so the
+            // reference gets a menu entry as well as its "?" binding.
+            let shortcuts_item = MenuItemBuilder::with_id("shortcuts", "Keyboard Shortcuts")
+                .accelerator("CmdOrCtrl+/")
+                .build(handle)?;
+
             let view_submenu = SubmenuBuilder::new(handle, "View")
                 .item(&toggle_projector_item)
                 .item(&blank_screen_item)
                 .item(&show_logo_item)
+                .separator()
+                .item(&shortcuts_item)
                 .build()?;
 
             let window_submenu = SubmenuBuilder::new(handle, "Window")
@@ -441,6 +449,7 @@ fn main() {
                     "toggle_projector" => "menu-toggle-projector",
                     "blank_screen" => "menu-blank-screen",
                     "show_logo" => "menu-toggle-logo",
+                    "shortcuts" => "menu-shortcuts",
                     _ => return,
                 };
                 if let Some(window) = app.get_webview_window("operator") {
