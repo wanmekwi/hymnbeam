@@ -313,16 +313,25 @@ function bibleTextPlain(text) {
     return text.replace(/\[([^\]]+)\]/g, '$1');
 }
 
+// The reference for whatever the Bible view is showing — Book Chapter:Verse
+// once a verse is active, Book Chapter while only the chapter is open. Null
+// when no chapter is open. Drives both the display title and the
+// add-to-collection action, so the two can never disagree.
+function currentBibleReference() {
+    const book = bibleState.openBook;
+    const ch = bibleState.openChapter;
+    if (!book || ch == null) return null;
+    return bibleState.activeVerse != null
+        ? `${book.name} ${ch}:${bibleState.activeVerse}`
+        : `${book.name} ${ch}`;
+}
+
 function renderBibleVerseGrid() {
     const book = bibleState.openBook;
     const ch = bibleState.openChapter;
     if (!book || ch == null) return;
 
-    // Title shows the full reference — Book Chapter:Verse once a verse is
-    // active, Book Chapter while only the chapter is open.
-    const ref = bibleState.activeVerse != null
-        ? `${book.name} ${ch}:${bibleState.activeVerse}`
-        : `${book.name} ${ch}`;
+    const ref = currentBibleReference();
     document.getElementById('bibleDisplayTitle').textContent = ref;
 
     const grid = document.getElementById('bibleVerseGrid');

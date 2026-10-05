@@ -120,18 +120,18 @@ function ingestSettings(raw) {
         typography: raw.typography, background: raw.background,
         layout: raw.layout, transition: raw.transition, logo: raw.logo,
     };
-    if (raw.bible && raw.bible.separate) {
-        const b = raw.bible;
-        bibleSettings = {
-            typography: b.typography || raw.typography,
-            background: b.background || raw.background,
-            layout: b.layout || raw.layout,
-            transition: b.transition || raw.transition,
-            logo: raw.logo,
-        };
-    } else {
-        bibleSettings = songSettings;
-    }
+    // Scripture alignment is its own setting even when everything else
+    // mirrors the songs, and defaults to left.
+    const b = raw.bible || {};
+    const bibleAlignment = (b.typography && b.typography.alignment) || 'left';
+    const base = b.separate ? b : {};
+    bibleSettings = {
+        typography: { ...(base.typography || raw.typography), alignment: bibleAlignment },
+        background: base.background || raw.background,
+        layout: base.layout || raw.layout,
+        transition: base.transition || raw.transition,
+        logo: raw.logo,
+    };
     applySettingsForMode(elements.projector.classList.contains('bible-mode'));
 }
 
@@ -374,11 +374,9 @@ function updateDisplay(data) {
             // Bible mode: just the reference, centred — no number or key.
             setTitleBar('', title, '');
         }
-        // For font-size measurement use plain text (strip italic markers).
-        const plainVerses = isBible
-            ? (verses && verses.length ? verses.map(bibleTextPlain) : (text ? [bibleTextPlain(text)] : []))
-            : (verses && verses.length ? verses : (text ? [text] : []));
-        currentVerses = plainVerses;
+        // Songs share one size across every verse. Bible verses are sized one
+        // at a time below, as each is put on screen.
+        currentVerses = isBible ? [] : (verses && verses.length ? verses : (text ? [text] : []));
         relayout(false);
     }
 
@@ -396,6 +394,14 @@ function updateDisplay(data) {
     // projector stuck showing the song under a Bible-mode layout.
     currentText = text;
     if (pendingSwapTimer) clearTimeout(pendingSwapTimer);
+
+    // One verse on screen, at the default size (smaller only if it wouldn't
+    // fit). Applied by the swap below, so the outgoing verse keeps its size
+    // while it fades out.
+    if (isBible) {
+        currentVerses = text ? [bibleTextPlain(text)] : [];
+        songFontSize = computeSongFontSize(currentVerses);
+    }
 
     const trans = (currentSettings && currentSettings.transition) || {};
     const dur = typeof trans.durationMs === 'number' ? trans.durationMs : 400;
@@ -457,8 +463,13 @@ function updateSongMeta(title, author, musical_key, songNumber) {
 
 const WIDTH_FILL = 0.9;
 const BIBLE_WIDTH_VW = 0.82; // matches the CSS 82vw on .bible-mode .lyrics-text
+const BIBLE_LINE_HEIGHT = 1.4; // matches the CSS line-height on .bible-mode .lyrics-text
 const BAR_GAP_PX = 24;
 const MIN_FONT_PX = 16;
+// Bible verses show at this fixed size (a share of the screen height, so the
+// projector and the scaled preview agree) rather than being blown up to fill
+// the screen; only a verse too long to fit at this size is shrunk.
+const BIBLE_DEFAULT_FONT_VH = 0.06;
 
 function availableLyricBand() {
     const containerRect = elements.lyricsContainer.getBoundingClientRect();
@@ -486,8 +497,12 @@ function measureFitSize(text) {
         const targetH = availableLyricBand() * 0.92;
         measureEl.style.whiteSpace = 'normal';
         measureEl.style.width = targetW + 'px';
-        let lo = MIN_FONT_PX, hi = 300;
-        for (let pass = 0; pass < 12; pass++) {
+        measureEl.style.lineHeight = BIBLE_LINE_HEIGHT;
+        const defaultPx = Math.max(MIN_FONT_PX, window.innerHeight * BIBLE_DEFAULT_FONT_VH);
+        let lo = MIN_FONT_PX, hi = defaultPx;
+        measureEl.style.fontSize = defaultPx + 'px';
+        if (measureEl.getBoundingClientRect().height <= targetH) lo = hi; // fits as is
+        for (let pass = 0; pass < 12 && lo < hi; pass++) {
             const mid = (lo + hi) / 2;
             measureEl.style.fontSize = mid + 'px';
             const rect = measureEl.getBoundingClientRect();
@@ -497,6 +512,7 @@ function measureFitSize(text) {
         }
         measureEl.style.whiteSpace = '';
         measureEl.style.width = '';
+        measureEl.style.lineHeight = '';
         return Math.max(MIN_FONT_PX, Math.floor(lo * 10) / 10);
     }
 

@@ -47,10 +47,12 @@ const DEFAULT_SETTINGS = {
     // Bible display overrides. While `separate` is false the projector uses the
     // song settings above for Bible verses too; when turned on, these fields
     // (seeded from the song settings the first time) drive Bible verses instead.
+    // The one exception is alignment: scripture keeps its own (left by default,
+    // as prose reads best flush-left) whether or not the rest is separate.
     bible: {
         separate: false,
         initialized: false,
-        typography: { fontFamily: 'Montserrat', fontWeight: 600, alignment: 'center' },
+        typography: { fontFamily: 'Montserrat', fontWeight: 600, alignment: 'left' },
         background: {
             kind: 'solid',
             color: '#000000',
@@ -261,108 +263,172 @@ async function fetchSongs() {
 
 // --- Forgiving search ----------------------------------------------------
 
+// Words that carry little meaning in a hymn title. They still help ranking
+// when they match, but a query is never rejected because one of them didn't.
+const SEARCH_STOPWORDS = new Set([
+    'a', 'an', 'the', 'of', 'in', 'on', 'to', 'and', 'is', 'o', 'oh', 'for',
+    'at', 'by', 'with', 'my', 'me', 'i',
+]);
+
+// Apostrophes are dropped when normalising, so a typed "its" or "im" is
+// also tried in full against titles written out as "It Is" / "I Am".
+const SEARCH_CONTRACTIONS = {
+    its: 'it is', im: 'i am', ive: 'i have', ill: 'i will', id: 'i would',
+    hes: 'he is', shes: 'she is', thats: 'that is', theres: 'there is',
+    whats: 'what is', youre: 'you are', were: 'we are', theyre: 'they are',
+    dont: 'do not', cant: 'can not', wont: 'will not', isnt: 'is not',
+};
+
+// Rows rendered for a search. Beyond this the list is noise and only slows
+// down every keystroke; the count still reports the full total.
+const SEARCH_RENDER_LIMIT = 150;
+const LYRIC_SEARCH_DELAY_MS = 250;
+
 function normalizeForSearch(s) {
     return String(s || '')
         .toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // strip accents
-        .replace(/[^a-z0-9\s]/g, ' ')                       // strip punctuation
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')   // strip accents
+        .replace(/['‘’`]/g, '')                   // "Ain't" → "aint"
+        .replace(/[^a-z0-9\s]/g, ' ')                       // other punctuation splits words
         .replace(/\s+/g, ' ')
         .trim();
 }
 
-// Standard Levenshtein, with an early bail-out when lengths differ a lot so
-// scoring stays cheap on a library of thousands of songs.
-function levenshtein(a, b) {
+// Levenshtein distance, giving up (returning max + 1) as soon as it is clear
+// the distance exceeds `max` — only small distances are ever interesting.
+function levenshtein(a, b, max = 2) {
     if (a === b) return 0;
-    if (!a.length) return b.length;
-    if (!b.length) return a.length;
-    if (Math.abs(a.length - b.length) > 3) return 99;
+    if (Math.abs(a.length - b.length) > max) return max + 1;
     let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
     for (let i = 0; i < a.length; i++) {
         const curr = [i + 1];
+        let rowMin = i + 1;
         for (let j = 0; j < b.length; j++) {
             const cost = a[i] === b[j] ? 0 : 1;
-            curr.push(Math.min(curr[j] + 1, prev[j + 1] + 1, prev[j] + cost));
+            const v = Math.min(curr[j] + 1, prev[j + 1] + 1, prev[j] + cost);
+            curr.push(v);
+            if (v < rowMin) rowMin = v;
         }
+        if (rowMin > max) return max + 1;
         prev = curr;
     }
     return prev[b.length];
 }
 
-function fuzzyScore(rawQuery, song) {
-    const q = normalizeForSearch(rawQuery);
-    if (!q) return 0;
+// Normalising thousands of titles on every keystroke is what made typing
+// lag, so it is done once per song list and cached here.
+let searchIndex = [];
+let searchIndexSource = null;
 
-    const title = normalizeForSearch(song.title);
-    const author = normalizeForSearch(song.author || '');
-    const number = String(song.song_number || song.id || '');
-    const numberNorm = normalizeForSearch(number);
+function getSearchIndex() {
+    if (searchIndexSource !== state.songs) {
+        searchIndexSource = state.songs;
+        searchIndex = state.songs.map(song => {
+            const title = normalizeForSearch(song.title);
+            const author = normalizeForSearch(song.author || '');
+            return {
+                song,
+                title,
+                compact: title.replace(/ /g, ''),
+                words: title.split(' ').filter(Boolean),
+                authorWords: author.split(' ').filter(Boolean),
+                number: normalizeForSearch(song.song_number || song.id),
+            };
+        });
+    }
+    return searchIndex;
+}
 
-    // Song-number match wins outright — it's how hymnal users page-flip.
-    if (numberNorm === q) return 100000;
-    if (numberNorm.startsWith(q)) return 50000 - q.length;
-
+// How well one query word matches the best of `words` (0 = not at all).
+// Prefixes count fully so half-typed words match while the user types.
+function wordMatchScore(qw, words) {
     let best = 0;
-
-    if (title === q) best = 20000;
-    else if (title.startsWith(q)) best = 12000 - title.length;
-    else if (title.includes(q)) {
-        best = 8000 - title.indexOf(q) * 5 - title.length;
-    }
-
-    if (author === q) best = Math.max(best, 5000);
-    else if (author.startsWith(q)) best = Math.max(best, 3000);
-    else if (author.includes(q)) best = Math.max(best, 1500);
-
-    // Per-word scoring lets "amazing grace" still rank a song titled
-    // "Grace, How Amazing" highly even though the words are reordered.
-    const qWords = q.split(' ').filter(Boolean);
-    const titleWords = title.split(' ').filter(Boolean);
-    if (qWords.length > 0) {
-        let wordScore = 0;
-        let allMatched = true;
-        for (const qw of qWords) {
-            let matched = 0;
-            for (const tw of titleWords) {
-                if (tw === qw) { matched = Math.max(matched, 400); break; }
-                if (tw.startsWith(qw)) matched = Math.max(matched, 260);
-                else if (tw.includes(qw)) matched = Math.max(matched, 130);
-                else if (qw.length >= 4) {
-                    const d = levenshtein(qw, tw);
-                    if (d === 1) matched = Math.max(matched, 200);
-                    else if (d === 2 && qw.length >= 6) matched = Math.max(matched, 110);
-                }
-            }
-            if (matched === 0) allMatched = false;
-            wordScore += matched;
+    for (const w of words) {
+        if (w === qw) return 100;
+        if (w.startsWith(qw)) { best = Math.max(best, 75); continue; }
+        if (qw.length >= 3 && w.includes(qw)) { best = Math.max(best, 45); continue; }
+        if (qw.length < 4 || best >= 55) continue;
+        const max = qw.length >= 7 ? 2 : 1;
+        if (levenshtein(qw, w, max) <= max) best = Math.max(best, 55 - 10 * (max - 1));
+        // Typo inside a half-typed word: "amazing grse" → "grace".
+        else if (w.length > qw.length && levenshtein(qw, w.slice(0, qw.length), 1) <= 1) {
+            best = Math.max(best, 40);
         }
-        if (allMatched && qWords.length > 1) wordScore += 300;
-        best = Math.max(best, wordScore);
     }
-
-    // Whole-title typo tolerance for short single-word typos.
-    if (best === 0 && q.length >= 4) {
-        const d = levenshtein(q, title);
-        if (d <= 2) best = Math.max(best, 400 - d * 120);
-    }
-
     return best;
 }
 
+function fuzzyScore(q, qCompact, qWords, entry) {
+    // Song-number match wins outright — it's how hymnal users page-flip.
+    if (entry.number === q) return 100000;
+    if (/^\d+$/.test(q) && entry.number.startsWith(q)) return 50000 - entry.number.length;
+
+    const { title } = entry;
+    let best = 0;
+
+    if (title === q) best = 3000;
+    else if (title.startsWith(q)) best = 2000;
+    else if (title.includes(' ' + q)) best = 1600 - title.indexOf(q);
+    // Ignoring spaces copes with "Al-le-lu-jah" vs "allelujah" and with
+    // words run together or split apart.
+    else if (qCompact.length >= 3 && entry.compact.includes(qCompact)) {
+        best = 1200 - entry.compact.indexOf(qCompact);
+    }
+
+    // Word-by-word: order-independent, typo-tolerant. Every meaningful word
+    // has to match something (one may be missed in longer queries), so a
+    // single common word no longer drags in hundreds of unrelated titles.
+    const content = qWords.filter(w => !SEARCH_STOPWORDS.has(w));
+    const required = content.length ? content : qWords;
+    const allowedMisses = required.length >= 3 ? 1 : 0;
+    let misses = 0;
+    let wordScore = 0;
+    for (const qw of qWords) {
+        const isRequired = required.includes(qw);
+        let s = wordMatchScore(qw, entry.words);
+        if (!s && isRequired) s = Math.round(wordMatchScore(qw, entry.authorWords) * 0.6);
+        if (!s && isRequired && ++misses > allowedMisses) { wordScore = 0; break; }
+        wordScore += isRequired ? s : s / 8;
+    }
+    if (wordScore > 0) {
+        wordScore += misses === 0 ? 150 : -60 * misses;
+        // People usually type a title from its start.
+        if (entry.words[0]?.startsWith(qWords[0])) wordScore += 50;
+        best = Math.max(best, wordScore);
+    }
+
+    // Whole-title typo tolerance ("amazng grace").
+    if (best === 0 && q.length >= 5 && levenshtein(q, title, 2) <= 2) best = 300;
+
+    // Among equally good matches, prefer the shorter (more exact) title.
+    return best > 0 ? best - title.length * 0.5 : 0;
+}
+
 function rankedSearchResults(query) {
+    const q = normalizeForSearch(query);
+    if (!q) return [];
+    const qCompact = q.replace(/ /g, '');
+    const qWords = q.split(' ');
+    const expanded = qWords.map(w => SEARCH_CONTRACTIONS[w] || w).join(' ');
+    const alt = expanded !== q ? expanded : null;
+    const altWords = alt ? alt.split(' ') : null;
     const scored = [];
-    for (const song of state.songs) {
-        const score = fuzzyScore(query, song);
-        if (score > 0) scored.push({ song, score });
+    for (const entry of getSearchIndex()) {
+        let score = fuzzyScore(q, qCompact, qWords, entry);
+        if (alt) score = Math.max(score, fuzzyScore(alt, qCompact, altWords, entry));
+        if (score > 0) scored.push({ song: entry.song, score });
     }
     scored.sort((a, b) => b.score - a.score || a.song.title.localeCompare(b.song.title));
     return scored.map(r => r.song);
 }
 
+let lyricSearchTimer = null;
+
 // Public entry point — also the listener bound to the search input.
-async function searchSongs(query) {
+function searchSongs(query) {
     const trimmed = (query || '').trim();
     state.searchQuery = trimmed;
+    clearTimeout(lyricSearchTimer);
 
     if (!trimmed) {
         state.searchResults = null;
@@ -373,20 +439,24 @@ async function searchSongs(query) {
     state.searchResults = rankedSearchResults(trimmed);
     renderSongList();
 
-    // If client-side ranking finds nothing in titles/authors/numbers, ask
-    // the backend to scan lyrics via FTS5 / LIKE so phrases like "chains
-    // are gone" still surface the right song.
-    if (state.searchResults.length === 0) {
+    // Titles are matched instantly above. Lyrics live in the backend, so ask
+    // it once the user pauses typing and add any extra songs underneath —
+    // people often know a hymn by its first line rather than its title.
+    if (normalizeForSearch(trimmed).length < 3) return;
+    lyricSearchTimer = setTimeout(async () => {
         try {
             const params = new URLSearchParams({ q: trimmed, sort: state.sortBy });
             const res = await fetch(`${API_URL}/songs/search?${params}`);
             if (!res.ok) return;
             const matches = await res.json();
             if (state.searchQuery !== trimmed) return; // user kept typing
-            state.searchResults = matches;
+            const seen = new Set(state.searchResults.map(s => s.id));
+            const extra = matches.filter(s => !seen.has(s.id));
+            if (extra.length === 0) return;
+            state.searchResults = state.searchResults.concat(extra);
             renderSongList();
-        } catch (e) { /* ignore — user just sees empty results */ }
-    }
+        } catch (e) { /* ignore — title matches are already shown */ }
+    }, LYRIC_SEARCH_DELAY_MS);
 }
 
 
@@ -461,7 +531,9 @@ function renderSongList() {
     }
 
     elements.emptyState.style.display = 'none';
-    elements.songList.innerHTML = list.map(song => `
+    const shown = searching ? list.slice(0, SEARCH_RENDER_LIMIT) : list;
+    const hidden = list.length - shown.length;
+    elements.songList.innerHTML = shown.map(song => `
         <div class="song-item ${state.currentSong?.id === song.id ? 'active' : ''}"
              data-id="${song.id}">
             <div class="song-item-header">
@@ -473,7 +545,9 @@ function renderSongList() {
                 ${song.author ? escapeHtml(song.author) + ' · ' : ''}${song.verse_count} verse${song.verse_count !== 1 ? 's' : ''}
             </div>
         </div>
-    `).join('');
+    `).join('') + (hidden > 0
+        ? `<div class="song-list-more">${hidden} more — keep typing to narrow it down</div>`
+        : '');
 
 }
 
@@ -2425,18 +2499,79 @@ async function toggleCollectionPicker() {
         return;
     }
     await fetchCollections();
-    const list = document.getElementById('collectionPickerList');
+    renderCollectionPickerList(document.getElementById('collectionPickerList'));
+    picker.classList.add('open');
+}
+
+
+// Shared by the song picker and the Bible picker.
+function renderCollectionPickerList(list) {
     if (state.collections.length === 0) {
         list.innerHTML = '<p class="collection-picker-empty">No collections yet — create one below.</p>';
-    } else {
-        list.innerHTML = state.collections.map(c => `
-            <button type="button" class="collection-picker-item" data-id="${c.id}">
-                ${escapeHtml(c.name)}
-                <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">${c.song_count}</span>
-            </button>
-        `).join('');
+        return;
     }
+    list.innerHTML = state.collections.map(c => `
+        <button type="button" class="collection-picker-item" data-id="${c.id}">
+            ${escapeHtml(c.name)}
+            <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">${c.song_count}</span>
+        </button>
+    `).join('');
+}
+
+
+// ---------- Bible passage → collection ----------
+
+// bible.js is a separate script; guard the same way projectCollectionBible does
+// so a load failure degrades to "nothing to add" instead of a ReferenceError.
+function bibleReferenceOnScreen() {
+    return typeof currentBibleReference === 'function' ? currentBibleReference() : null;
+}
+
+// The Bible view gets its own picker rather than borrowing the song view's, so
+// neither has to be moved around the DOM when the content view switches.
+async function toggleBibleCollectionPicker() {
+    const picker = document.getElementById('bibleCollectionPicker');
+    if (picker.classList.contains('open')) {
+        picker.classList.remove('open');
+        return;
+    }
+    if (!bibleReferenceOnScreen()) {
+        updateStatus('Open a passage first');
+        return;
+    }
+    await fetchCollections();
+    renderCollectionPickerList(document.getElementById('bibleCollectionPickerList'));
     picker.classList.add('open');
+}
+
+
+// Adds whatever the Bible view is showing — the active verse, or the chapter
+// when none is selected. Stored as a reference, matching the passages added
+// from the collection panel's own "+ Add" menu.
+async function addCurrentPassageToCollection(collectionId) {
+    const reference = bibleReferenceOnScreen();
+    if (!reference) {
+        updateStatus('Open a passage first');
+        return;
+    }
+    try {
+        const res = await fetch(`${API_URL}/collections/${collectionId}/songs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_type: 'bible', reference })
+        });
+        if (!res.ok) throw new Error(`Add failed (${res.status})`);
+        document.getElementById('bibleCollectionPicker').classList.remove('open');
+        await fetchCollections();
+        // Only the open collection's list is on screen; refresh it in place.
+        if (state.openCollection && sameCollectionId(state.openCollection.id, collectionId)) {
+            await openCollectionDetail(collectionId, { showView: false });
+        }
+        updateStatus(`Added ${reference}`);
+    } catch (e) {
+        console.error('addCurrentPassageToCollection:', e);
+        updateStatus('Could not add passage to collection');
+    }
 }
 
 
@@ -2455,6 +2590,12 @@ function targetSettings() {
     return state.settings;
 }
 
+// Alignment is always per-profile (see DEFAULT_SETTINGS.bible), so it reads
+// and writes the Bible's own typography even while the rest mirrors songs.
+function alignmentSettings() {
+    return settingsTarget === 'bible' ? state.settings.bible.typography : state.settings.typography;
+}
+
 function bibleIsLocked() {
     return settingsTarget === 'bible' && !state.settings.bible.separate;
 }
@@ -2467,6 +2608,13 @@ function songDisplaySlice() {
         typography: s.typography, background: s.background,
         layout: s.layout, transition: s.transition
     }));
+}
+
+// Copy the song look onto the Bible profile, keeping scripture's own alignment.
+function copySongDisplayToBible() {
+    const alignment = state.settings.bible.typography.alignment;
+    Object.assign(state.settings.bible, songDisplaySlice());
+    state.settings.bible.typography.alignment = alignment;
 }
 
 // Reflect the current edit target in the target-row controls and lock the
@@ -2582,7 +2730,7 @@ function updateSettingsPreview() {
     const text = elements.settingsPreviewText;
     text.style.fontFamily = FONT_STACKS[s.typography.fontFamily] || FONT_STACKS['Montserrat'];
     text.style.fontWeight = s.typography.fontWeight;
-    text.style.textAlign = s.typography.alignment;
+    text.style.textAlign = alignmentSettings().alignment;
 }
 
 function syncSettingsForm() {
@@ -2592,7 +2740,7 @@ function syncSettingsForm() {
     elements.setFontWeight.value = s.typography.fontWeight;
     elements.setFontWeightValue.textContent = s.typography.fontWeight;
     elements.setAlignment.querySelectorAll('button').forEach(b => {
-        b.classList.toggle('active', b.dataset.value === s.typography.alignment);
+        b.classList.toggle('active', b.dataset.value === alignmentSettings().alignment);
     });
 
     elements.setBgKind.querySelectorAll('button').forEach(b => {
@@ -3015,14 +3163,14 @@ function initSettingsDialog() {
         // Seed the Bible profile from the current song look the first time it's
         // split off, so "separate" starts out identical to the songs.
         if (separate && !state.settings.bible.initialized) {
-            Object.assign(state.settings.bible, songDisplaySlice());
+            copySongDisplayToBible();
             state.settings.bible.initialized = true;
         }
         syncSettingsForm();
         onSettingsChanged();
     });
     elements.bibleMatchSongBtn.addEventListener('click', () => {
-        Object.assign(state.settings.bible, songDisplaySlice());
+        copySongDisplayToBible();
         syncSettingsForm();
         onSettingsChanged();
     });
@@ -3039,7 +3187,7 @@ function initSettingsDialog() {
     });
     elements.setAlignment.querySelectorAll('button').forEach(b => {
         b.addEventListener('click', () => {
-            targetSettings().typography.alignment = b.dataset.value;
+            alignmentSettings().alignment = b.dataset.value;
             syncSettingsForm();
             onSettingsChanged();
         });
@@ -3568,10 +3716,22 @@ function initEventListeners() {
         if (id && state.currentSong) await addToCollection(id);
     });
 
+    // Add the passage on screen in the Bible view to a collection
+    document.getElementById('bibleAddToCollectionBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleBibleCollectionPicker();
+    });
+    document.getElementById('bibleCollectionPickerNew')?.addEventListener('click', async () => {
+        document.getElementById('bibleCollectionPicker').classList.remove('open');
+        const id = await createCollection('New Collection');
+        if (id) await addCurrentPassageToCollection(id);
+    });
+
     // Close pickers when clicking outside
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.add-to-collection-wrapper')) {
-            document.getElementById('collectionPicker').classList.remove('open');
+            document.querySelectorAll('.collection-picker.open')
+                .forEach(p => p.classList.remove('open'));
         }
         if (!e.target.closest('#exportBtn') && !e.target.closest('#exportMenu')) {
             closeExportMenu();
@@ -3615,6 +3775,14 @@ function initEventListeners() {
         if (btn) {
             e.stopPropagation();
             addToCollection(parseInt(btn.dataset.id));
+        }
+    });
+
+    document.getElementById('bibleCollectionPickerList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.collection-picker-item');
+        if (btn) {
+            e.stopPropagation();
+            addCurrentPassageToCollection(parseInt(btn.dataset.id));
         }
     });
 }

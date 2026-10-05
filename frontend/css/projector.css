@@ -54,6 +54,13 @@ body {
     line-height: 1.4;
 }
 
+/* The reference reads as a heading for the verse, so it is larger than a
+ * song title; sized off the height like the verse text itself. */
+.projector.bible-mode .song-title-bar {
+    font-size: clamp(20px, 4.4vh, 64px);
+    color: rgba(255, 255, 255, 0.92);
+}
+
 .projector.bible-mode .lyrics-text em {
     font-style: italic;
     font-weight: inherit;

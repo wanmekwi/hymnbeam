@@ -358,6 +358,13 @@ body {
     padding-left: 36px;
 }
 
+.song-list-more {
+    padding: 10px 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
 .empty-state {
     display: flex;
     flex-direction: column;
@@ -2224,7 +2231,8 @@ body {
 
 /* While Bible mirrors the song settings, its panels show read-only. The target
    row stays interactive so the "use same as songs" toggle can be turned off. */
-.settings-content.display-locked .settings-panel {
+/* Alignment stays editable: scripture keeps its own even while mirroring songs. */
+.settings-content.display-locked .settings-panel > :not(.profile-own-setting) {
     opacity: 0.45;
     pointer-events: none;
 }

@@ -17,7 +17,10 @@ data/
 # Personal song libraries (not for distribution)
 251123_Hymns.json
 BCF_SongLibrary_*.json
+HCT_SongLibrary*.json
 OnlyBelieveSongs.json
+key_provenance.json
+scripts/*.json
 
 # Working notes (not committed; see git log for history)
 utility-docs/

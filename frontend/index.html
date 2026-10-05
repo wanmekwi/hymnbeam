@@ -338,6 +338,26 @@
                             <h1 class="song-title" id="bibleDisplayTitle"></h1>
                             <p class="song-author" id="bibleDisplaySubtitle">King James Version</p>
                         </div>
+                        <div class="song-actions">
+                            <div class="add-to-collection-wrapper">
+                                <button type="button" class="btn btn-icon" id="bibleAddToCollectionBtn" title="Add this passage to a collection">
+                                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M3 6h14M3 10h14M3 14h8"/>
+                                        <circle cx="16" cy="14" r="3"/>
+                                        <path d="M16 12.5v3M14.5 14h3"/>
+                                    </svg>
+                                </button>
+                                <div class="collection-picker" id="bibleCollectionPicker">
+                                    <div class="collection-picker-list" id="bibleCollectionPickerList"></div>
+                                    <button type="button" class="collection-picker-new" id="bibleCollectionPickerNew">
+                                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M8 3v10M3 8h10"/>
+                                        </svg>
+                                        New collection
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                         <div class="preview-area">
                             <button type="button" class="preview-layout-toggle" id="biblePreviewToggle" aria-label="Toggle preview"></button>
                             <div class="preview-container" id="biblePreviewContainer">
@@ -627,7 +647,7 @@ Second verse lyrics..."></textarea>
                             <label for="setFontWeight">Weight: <span class="value-readout" id="setFontWeightValue">600</span></label>
                             <input type="range" id="setFontWeight" min="400" max="700" step="100" value="600">
                         </div>
-                        <div class="form-group">
+                        <div class="form-group profile-own-setting">
                             <label>Alignment</label>
                             <div class="segmented" id="setAlignment">
                                 <button type="button" data-value="left">Left</button>
