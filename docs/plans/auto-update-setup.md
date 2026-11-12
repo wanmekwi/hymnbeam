@@ -10,34 +10,54 @@ Read the **Architecture primer** in [during-the-service.md](during-the-service.m
 first — the custom-protocol axum router, the Windows WebView2 upload caveat, and
 the tag-driven release CI all matter here.
 
-## What's already wired (dormant)
+## How an update reaches a user
 
-These are committed and safe — they do nothing until you complete the activation
-steps below:
+The updater has been live since v0.5.0. From the user's side:
+
+1. **Launch check.** A few seconds after start-up the app quietly asks the
+   updater plugin whether `latest.json` names a newer version. Nothing is
+   downloaded. If there is one, a toast offers it and a dot appears on the logo
+   (which opens About). "Check for Updates…" in the app menu and the About
+   button run the same check on demand.
+2. **Install update.** One click in About downloads the signed payload with a
+   percentage, verifies it against the pubkey, swaps it over the installed app
+   and relaunches. No browser, no DMG, no dragging to Applications.
+3. **Never mid-service.** Installing restarts the app (on Windows the installer
+   closes it outright), so if the projector is open the download completes and
+   then waits behind a "Restart to finish updating" button, which itself refuses
+   while the projector is still open.
+4. **Fallbacks.** If the plugin check fails, the GitHub releases API is asked
+   instead and the button opens the installer download in the browser. If the
+   in-place install fails (app still on the disk image, unwritable folder), the
+   panel points at the release page.
+
+All of this lives in `frontend/js/app.js` under "App updates" (`updateFlow`,
+`checkForUpdates`, `startUpdateDownload`, `installDownloadedUpdate`).
+
+The payload is still the **whole app** (about 20 MB on macOS, 6 MB on Windows):
+Tauri's updater has no delta patches. What the user is spared is the manual
+reinstall, not the bytes.
+
+## What's wired
 
 - `tauri-plugin-updater`, `tauri-plugin-opener` and `tauri-plugin-process` are
   dependencies (`src-tauri/Cargo.toml`), all registered in
-  `src-tauri/src/main.rs`.
-- `updater:default`, `opener:default` and `process:default` are granted in
-  `src-tauri/capabilities/default.json`.
+  `src-tauri/src/main.rs`, with `updater:default`, `opener:default` and
+  `process:default` granted in `src-tauri/capabilities/default.json`.
 - `src-tauri/tauri.conf.json` has a `plugins.updater` block with the GitHub
-  "latest release" endpoint and an **empty `pubkey`**. The empty pubkey is the
-  dormant marker: the plugin loads, but `check()` fails signature verification,
-  so the frontend's `tryPluginAutoUpdate()` catches the error and falls back to
-  the browser download. (An absent `plugins.updater` block makes the app panic
-  at startup — keep the block, just fill in the pubkey.)
-- The frontend (`frontend/js/app.js`, `checkForUpdates` / `tryPluginAutoUpdate`)
-  already prefers the plugin when it works and falls back otherwise. **No
-  frontend changes are needed to activate.**
-- **CI is done and dormant (Option B, gated).** `.github/workflows/release.yml`
-  and `build-macos.sh` sign updater artifacts and publish `latest.json`, but
-  every updater step is guarded on the `TAURI_SIGNING_PRIVATE_KEY` secret. With
-  the secret unset the release builds exactly as before; setting it turns the
-  whole path on. `createUpdaterArtifacts` is injected by CI when signing (not
-  hard-coded in config), so there is no build-break trap.
-- **Post-update relaunch is wired** — `tauri-plugin-process` is registered, so
-  `tryPluginAutoUpdate()`'s `process.relaunch()` works once the updater is live
-  (step 5 below is already done).
+  "latest release" endpoint and the pubkey. (An absent `plugins.updater` block
+  makes the app panic at startup. An empty pubkey makes `check()` fail, which
+  sends the frontend down the browser-download fallback.)
+- `.github/workflows/release.yml` and `build-macos.sh` sign updater artifacts
+  and publish `latest.json`, with every updater step guarded on the
+  `TAURI_SIGNING_PRIVATE_KEY` secret. `createUpdaterArtifacts` is injected by CI
+  when signing (not hard-coded in config), so local builds need no key.
+- `bundle.macOS.signingIdentity` is `"-"`, so Tauri ad-hoc signs the `.app`
+  *before* it packs the DMG and the updater `.app.tar.gz`. Up to v0.5.1 the
+  signing happened afterwards in `build-macos.sh`, which fixed up the DMG but
+  left the updater payload with only the linker's signature (no sealed
+  resources, a different code identifier from the DMG install). `build-macos.sh`
+  now verifies the payload's signature and fails the build if it is missing.
 
 ## Status: ACTIVATED 2026-07-31
 
@@ -139,11 +159,14 @@ relaunches the app itself, so relaunch mostly matters for macOS.
   *from* v0.2.1+. (This note previously said activation takes effect "one release
   later"; that was written before the pubkey shipped and no longer applies.)
   Anyone still on v0.2.0 or earlier keeps the browser-download fallback.
-- **macOS unsigned-app interaction.** The updater replaces `HymnBeam.app` in
-  place. Because the app is not yet notarized, the replaced bundle can inherit a
-  quarantine flag and hit Gatekeeper on relaunch. Notarizing the app (Apple
-  Developer Program) removes this friction and is a prerequisite for a truly
-  seamless macOS auto-update — see the 1.0 roadmap.
+- **macOS is ad-hoc signed, not notarized.** The updater fetches the payload
+  itself, so the replaced bundle carries no quarantine flag and Gatekeeper does
+  not prompt on relaunch. The first install from the DMG still needs the
+  quarantine step in the README; notarizing (Apple Developer Program) is what
+  removes that — see the 1.0 roadmap.
+- **The app must be able to replace itself.** Run straight from the mounted DMG,
+  or installed where the user cannot write, the install step fails and the panel
+  falls back to the release page.
 - **Verify the JS global.** Confirm `window.__TAURI__.updater.check` is defined
   in the built app (with `withGlobalTauri: true` it should be). If it isn't, the
   frontend already falls back to the browser download; expose the updater JS API

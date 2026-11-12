@@ -43,6 +43,19 @@ if [[ -z "${APP_PATH:-}" ]]; then
   exit 1
 fi
 
+# The updater payload is packed by `cargo tauri build` itself, so it only carries
+# a real bundle signature if Tauri signed the app first (signingIdentity "-" in
+# tauri.conf.json). Check the packed copy, not the .app beside it: that one gets
+# re-signed below and would hide a regression.
+UPDATER_TGZ="$(find "$APP_DIR" -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
+if [[ -n "${UPDATER_TGZ:-}" ]]; then
+  echo "==> Verifying signature inside updater payload ${UPDATER_TGZ}"
+  TGZ_TMP="$(mktemp -d)"
+  tar -xzf "$UPDATER_TGZ" -C "$TGZ_TMP"
+  codesign --verify --deep --strict --verbose "${TGZ_TMP}/$(basename "$APP_PATH")"
+  rm -rf "$TGZ_TMP"
+fi
+
 echo "==> Ad-hoc signing ${APP_PATH}"
 codesign --deep --force --sign - "$APP_PATH"
 codesign --verify --verbose "$APP_PATH"
