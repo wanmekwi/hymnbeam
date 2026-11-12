@@ -93,13 +93,20 @@ test('rapid changes end on the last slide sent, never an earlier one', async () 
     assert.equal(p.text(), 'three');
 });
 
-// The race described in updateDisplay: a song's deferred text swap must not
-// land after the Bible verse that superseded it.
+// The race described in updateDisplay: a song's text swap is deferred for its
+// fade. If scripture (set here to cut, so it swaps at once) arrives in that
+// window, the song's late swap must be cancelled — otherwise the projector
+// ends up showing the song's words under the scripture layout.
 test('scripture sent straight after a song is what ends up on screen', async () => {
-    p = await bootProjector({ settings: { transition: { style: 'fade', durationMs: 200 } } });
+    const fade = { style: 'fade', durationMs: 200 };
+    p = await bootProjector({ settings: {
+        transition: fade,
+        bible: { separate: true, transition: { style: 'cut', durationMs: 0 } },
+    } });
     await p.send('update-lyrics', slide());
     await p.send('update-lyrics', verse());
-    await p.sleep(200);
+    assert.equal(p.text(), 'The LORD is my shepherd');
+    await p.sleep(200);                 // past the point the song's swap would have fired
     assert.equal(p.text(), 'The LORD is my shepherd');
     assert.equal(p.projectorHas('bible-mode'), true);
 });
