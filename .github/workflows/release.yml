@@ -14,7 +14,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Both installer builds wait on the test suites, so a tag that fails them
+  # stops here instead of publishing a release (and, now that the app offers
+  # updates at launch, pushing it to every running copy).
+  tests:
+    uses: ./.github/workflows/test.yml
+
   build-macos:
+    needs: [tests]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -92,6 +99,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    needs: [tests]
     runs-on: windows-latest
     permissions:
       contents: write

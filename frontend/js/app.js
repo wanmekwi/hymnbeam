@@ -1463,7 +1463,8 @@ function parsePastedSong(text) {
         const firstLine = lines[0].trim();
 
         if (sectionPattern.test(firstLine)) {
-            let label = firstLine.replace(/(\d+)/, ' $1').trim();
+            // "Verse1" and "Verse 1" both become "Verse 1".
+            let label = firstLine.replace(/\s*(\d+)/, ' $1').trim();
             label = label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
             const text = lines.slice(1).map(l => l.trim()).join('\n').trim();
             if (text) {
@@ -2073,6 +2074,17 @@ async function fetchCollections() {
 }
 
 
+// Where the song on screen sits in the open collection, or -1. Readings and
+// logo slides carry no song_id at all, so with no song selected a bare
+// `entry.song_id === state.currentSong?.id` is `undefined === undefined` and
+// picks the first of them — the service would then start from the wrong item.
+function collectionPositionOfCurrentSong() {
+    const songId = state.currentSong?.id;
+    if (songId == null || !state.openCollection) return -1;
+    return state.openCollection.songs.findIndex(s => s.song_id === songId);
+}
+
+
 async function openCollectionDetail(collectionId, { showView = true } = {}) {
     try {
         const response = await fetch(collectionApiUrl(`/collections/${collectionId}`), {
@@ -2080,17 +2092,12 @@ async function openCollectionDetail(collectionId, { showView = true } = {}) {
         });
         if (!response.ok) throw new Error('Failed');
         state.openCollection = await response.json();
-        if (showView) {
-            state.collectionPosition = state.openCollection.songs.findIndex(
-                s => s.song_id === state.currentSong?.id
-            );
-        } else if (
+        if (
+            showView ||
             state.collectionPosition < 0 ||
             state.collectionPosition >= state.openCollection.songs.length
         ) {
-            state.collectionPosition = state.openCollection.songs.findIndex(
-                s => s.song_id === state.currentSong?.id
-            );
+            state.collectionPosition = collectionPositionOfCurrentSong();
         }
         renderCollectionDetail();
         if (showView) {
@@ -2407,6 +2414,13 @@ async function projectCollectionBible(reference) {
         updateStatus('Bible module not ready');
         return;
     }
+    try {
+        await ensureBibleBooks();
+    } catch (e) {
+        console.error('projectCollectionBible:', e);
+        updateStatus('Could not project passage');
+        return;
+    }
     const ref = parseReference(reference || '');
     if (!ref) {
         updateStatus(`Couldn't resolve "${reference}"`);
@@ -2470,9 +2484,14 @@ async function addBibleToCollection() {
     if (!state.openCollection) return;
     const reference = elements.collectionBibleInput.value.trim();
     if (!reference) return;
-    if (typeof parseReference === 'function' && !parseReference(reference)) {
-        updateStatus(`Couldn't resolve "${reference}"`);
-        return;
+    if (typeof parseReference === 'function') {
+        // If the book list can't be loaded, let the reference through rather
+        // than rejecting a valid one; it is resolved again when projected.
+        const booksLoaded = await ensureBibleBooks().then(() => true, () => false);
+        if (booksLoaded && !parseReference(reference)) {
+            updateStatus(`Couldn't resolve "${reference}"`);
+            return;
+        }
     }
     try {
         const res = await fetch(`${API_URL}/collections/${state.openCollection.id}/songs`, {
