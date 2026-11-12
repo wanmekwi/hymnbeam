@@ -47,7 +47,17 @@ const bible = {
             verse: i + 1,
             text: i === 15 ? 'For God so loved the world' : `John three verse ${i + 1}`,
         })),
+        // Square brackets mark words the translators supplied; shown in italics.
+        '19O/23': [
+            { verse: 1, text: 'The LORD [is] my shepherd; I shall not want.' },
+            { verse: 2, text: 'He maketh me to lie down in green pastures' },
+        ],
     },
+    // Keyword search hits, as GET /bible/search returns them.
+    search: [
+        { book: '19O', chapter: 23, verse: 1, reference: 'Psalms 23:1', text: 'The LORD [is] my shepherd; I shall not want.' },
+        { book: '43N', chapter: 3, verse: 16, reference: 'John 3:16', text: 'For God so loved the world' },
+    ],
 };
 
 // An order of service: song, reading, holding slide, song.

@@ -60,17 +60,21 @@ function syncTargetRow() {
     elements.settingsContent.classList.toggle('display-locked', bibleIsLocked());
 }
 
+// Copy a saved background onto the defaults. The nested gradient/image objects
+// are merged field by field rather than swapped in whole, so a setting saved
+// before a field existed still ends up with that field's default.
+function mergeBackground(target, saved) {
+    const { gradient, image, ...flat } = saved;
+    Object.assign(target, flat);
+    if (gradient) Object.assign(target.gradient, gradient);
+    if (image) Object.assign(target.image, image);
+}
+
 function mergeSettings(saved) {
     const out = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     if (saved && typeof saved === 'object') {
         if (saved.typography) Object.assign(out.typography, saved.typography);
-        if (saved.background) {
-            const savedGrad = saved.background.gradient;
-            const savedImage = saved.background.image;
-            Object.assign(out.background, saved.background);
-            if (savedGrad) Object.assign(out.background.gradient, savedGrad);
-            if (savedImage) Object.assign(out.background.image, savedImage);
-        }
+        if (saved.background) mergeBackground(out.background, saved.background);
         if (saved.layout) Object.assign(out.layout, saved.layout);
         if (saved.transition) Object.assign(out.transition, saved.transition);
         if (saved.logo) Object.assign(out.logo, saved.logo);
@@ -79,12 +83,7 @@ function mergeSettings(saved) {
             out.bible.separate = !!sb.separate;
             out.bible.initialized = !!sb.initialized;
             if (sb.typography) Object.assign(out.bible.typography, sb.typography);
-            if (sb.background) {
-                const g = sb.background.gradient, im = sb.background.image;
-                Object.assign(out.bible.background, sb.background);
-                if (g) Object.assign(out.bible.background.gradient, g);
-                if (im) Object.assign(out.bible.background.image, im);
-            }
+            if (sb.background) mergeBackground(out.bible.background, sb.background);
             if (sb.layout) Object.assign(out.bible.layout, sb.layout);
             if (sb.transition) Object.assign(out.bible.transition, sb.transition);
         }
