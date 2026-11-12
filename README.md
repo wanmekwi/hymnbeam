@@ -224,10 +224,11 @@ hymnbeam/
 │   ├── index.html        # Operator window
 │   ├── projector.html    # Projector display
 │   ├── css/              # Stylesheets
-│   ├── js/               # Application logic
+│   ├── js/               # Application logic, one plain script per area
 │   ├── fonts/            # Bundled WOFF2 fonts (SIL OFL)
 │   └── img/              # In-app logo art
 ├── src-tauri/icons/      # App icon variants (.icns / .ico / png)
+├── tests/                # Frontend tests (jsdom) — `npm test`
 ├── songs/                # Sample song files
 ├── docs/                 # Screenshots for README
 └── build-macos.sh        # Universal-binary build + ad-hoc sign

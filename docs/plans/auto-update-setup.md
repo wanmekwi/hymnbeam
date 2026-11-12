@@ -31,7 +31,7 @@ The updater has been live since v0.5.0. From the user's side:
    in-place install fails (app still on the disk image, unwritable folder), the
    panel points at the release page.
 
-All of this lives in `frontend/js/app.js` under "App updates" (`updateFlow`,
+All of this lives in `frontend/js/updates.js` (`updateFlow`,
 `checkForUpdates`, `startUpdateDownload`, `installDownloadedUpdate`).
 
 The payload is still the **whole app** (about 20 MB on macOS, 6 MB on Windows):

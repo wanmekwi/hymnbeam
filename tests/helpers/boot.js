@@ -1,4 +1,4 @@
-// Boots the real operator UI (frontend/index.html + app.js + bible.js) inside
+// Boots the real operator UI (frontend/index.html and every script it loads) inside
 // jsdom, against an in-memory stand-in for the Rust backend and the Tauri
 // bridge. Tests then drive it the way an operator does — key presses and
 // clicks — and assert on what would have reached the projector.
