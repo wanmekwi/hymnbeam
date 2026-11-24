@@ -456,12 +456,36 @@ body {
     align-self: flex-start;
 }
 
+/* Moved by the projector a frame at a time (see Gliding in message-scroll.js),
+ * so it is kept as a layer of its own and only ever slid, not drawn afresh. */
 .message-column {
-    transition: transform 320ms cubic-bezier(0.25, 0.8, 0.3, 1);
+    will-change: transform;
 }
 
 .message-para {
     margin: 0;
+    position: relative;
+}
+
+/* A paragraph's number, small and faint in the margin beside its first line.
+ * It is drawn from an attribute, outside the text and its flow, so lines
+ * break and are counted exactly as without it. The box is the size of a line
+ * of the paragraph, so the number sits level with the first line, and it is
+ * drawn at about half size from its right-hand edge. */
+.message-para[data-number]::before {
+    content: attr(data-number);
+    position: absolute;
+    top: 0;
+    right: 100%;
+    margin-right: 0.45em;
+    transform: scale(0.55);
+    transform-origin: right center;
+    opacity: 0.55;
+    font-style: normal;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
 }
 
 .message-para + .message-para {

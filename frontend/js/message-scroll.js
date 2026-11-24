@@ -2,7 +2,8 @@
 //
 // Once a paragraph is chosen, the projector shows the message as one column
 // of text that scrolls: what is at the top of the screen is a place in the
-// message, {paragraph, line}, and the operator moves it on or back by lines.
+// message, {paragraph, line}, and the operator moves it on or back by lines
+// (the wheel, by parts of a line, coming to rest on a whole one).
 // Where lines break is a layout question, so the caller passes a layout:
 //
 //   count      how many paragraphs there are
@@ -119,6 +120,59 @@ function messageLastTop(layout) {
 function messageClampTop(layout, place) {
     const last = messageLastTop(layout);
     return compareMessagePlaces(place, last) > 0 ? last : place;
+}
+
+// While the wheel turns, the top of the screen may be part-way between two
+// lines: `part` (0 to 1) of the way from a place's line to the next. This
+// moves `lines` on from there (back if negative; a fraction counts), and gives
+// {place, part}. Neither end of the message is passed, and at either the text
+// rests on a whole line.
+function messageMovePart(layout, place, part, lines) {
+    const total = (part || 0) + lines;
+    let whole = Math.floor(total);
+    let rest = total - whole;
+    if (rest > 1 - 1e-6) { whole += 1; rest = 0; }
+    if (rest < 1e-6) rest = 0;
+    const direction = Math.sign(whole);
+    let at = place;
+    for (let i = 0; i < Math.abs(whole); i++) {
+        const next = messageNextLine(layout, at, direction);
+        if (!next) { rest = 0; break; }
+        at = next;
+    }
+    const last = messageLastTop(layout);
+    return compareMessagePlaces(at, last) >= 0 ? { place: last, part: 0 } : { place: at, part: rest };
+}
+
+// ---- Gliding -------------------------------------------------------------------
+//
+// The text glides to where it is going rather than jumping there. It is drawn
+// towards its target the way a door closer shuts a door (a critically damped
+// spring): it sets off gently, arrives gently and never overshoots from rest.
+// A new target part-way through a glide bends the motion towards it and keeps
+// the speed, so a run of moves (a held key, a turning wheel) is one movement
+// and not a string of starts and stops.
+
+// How quickly a glide closes on its target, per second. A move is all but
+// done (95%) after 4.7 / rate seconds: just under half a second.
+const MESSAGE_GLIDE_RATE = 10;
+// While the wheel turns, the text keeps close behind it instead (95% of the
+// way in about 0.16 s): it moves as the hand does, and a mouse wheel's steps
+// are still smoothed out.
+const MESSAGE_FOLLOW_RATE = 30;
+
+// One step of a glide: where the text is and how fast it is going (px and
+// px a second) `seconds` later, given where it was and where it is going.
+function messageGlideStep(pos, speed, target, seconds, rate = MESSAGE_GLIDE_RATE) {
+    const away = pos - target;
+    const pull = speed + rate * away;
+    const fade = Math.exp(-rate * seconds);
+    return { pos: target + (away + pull * seconds) * fade, speed: (speed - rate * pull * seconds) * fade };
+}
+
+// Whether a glide is as good as there: within half a pixel and all but still.
+function messageGlideArrived(pos, speed, target) {
+    return Math.abs(pos - target) < 0.5 && Math.abs(speed) < 4;
 }
 
 // The paragraphs the projector is sent with `place` at the top of the screen

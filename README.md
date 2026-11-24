@@ -91,9 +91,10 @@ without leaving the app. On Windows, `⌘` below is `Ctrl`.
 
 | Key | Action |
 |-----|--------|
-| `→` / `←` | Next / previous verse, or move a message on screen three lines |
-| `⇧→` / `⇧←` | Move a message on screen a screen at a time (the mouse wheel over its preview works too) |
-| `↓` / `↑` | Move through the message in the reader |
+| `→` / `←` | Next / previous verse, or roll a message on screen three lines (hold to keep it rolling) |
+| `↓` / `↑` | Roll a message on screen a line (hold to keep it rolling); otherwise move the highlight in the reader |
+| `⇧↓` / `⇧↑` | Roll a message on screen a screen at a time (`⇧→` / `⇧←` do too) |
+| Mouse wheel / trackpad | Roll a message on screen like a page: over the reader, the preview or the projector window. With `⌥` held over the reader, scroll the reader alone |
 | `Enter` | Project the highlighted paragraph |
 | `1`–`9` | Jump to verse 1–9 |
 | `0` | Jump to verse 10 |

@@ -33,6 +33,8 @@ function initMenuEvents() {
     });
     // The projector window's size, when it opens and when it changes.
     on('projector-size', (event) => setMessageMeasureSize(event.payload));
+    // The wheel and the keys, when the projector window has them.
+    on('projector-input', (event) => onProjectorInput(event.payload));
     on('projector-closed', () => {
         state.projectorOpen = false;
         // The alert died with the projector window — reset the operator's
@@ -283,18 +285,23 @@ function initEventListeners() {
             // or back a few lines (with Shift, a screen), otherwise the song
             // steps to its next or previous verse.
             case 'ArrowRight':
-                if (!stepLiveMessage(1, { screen: e.shiftKey })) navigateVerse(1);
+                if (!stepLiveMessage(1, { screen: e.shiftKey, repeat: e.repeat })) navigateVerse(1);
                 break;
             case 'ArrowLeft':
-                if (!stepLiveMessage(-1, { screen: e.shiftKey })) navigateVerse(-1);
+                if (!stepLiveMessage(-1, { screen: e.shiftKey, repeat: e.repeat })) navigateVerse(-1);
                 break;
-            // In the message reader: move the highlight, and Enter projects it.
+            // A message on screen rolls a line on or back (with Shift, a screen).
+            // If the reader's highlight is on something else, they move the
+            // highlight instead, and Enter projects it.
             case 'ArrowDown':
-            case 'ArrowUp':
+            case 'ArrowUp': {
                 // A focused drop-down keeps its own arrow keys.
                 if (target.closest && target.closest('select')) break;
-                if (moveParagraphHighlight(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
+                const direction = e.key === 'ArrowDown' ? 1 : -1;
+                if (rollLiveMessageByKey(direction, { screen: e.shiftKey, repeat: e.repeat })
+                    || moveParagraphHighlight(direction)) e.preventDefault();
                 break;
+            }
             case 'Enter':
                 // A focused button gets Enter as a click of its own.
                 if (target.closest && target.closest('button, a, select, summary')) break;

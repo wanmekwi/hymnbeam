@@ -577,14 +577,18 @@ function scrollMessageParagraph(index, block = 'nearest') {
 
 // ---- On the projector -------------------------------------------------------
 //
-// A message is shown as one column of text that scrolls (see
+// A message is shown as one column of text that rolls like a page (see
 // message-scroll.js). Choosing a paragraph puts it at the top of the screen;
-// from there the operator moves the text on or back by lines, into the
-// paragraphs after it and before it, with the keys, the mouse wheel over the
-// preview, or a click on the line in the reader.
+// from there the operator rolls the text on or back, into the paragraphs
+// after it and before it: with the mouse wheel or trackpad (over the reader,
+// the preview or the projector window itself), where it stays wherever it is
+// left, or with the arrow keys, which move it by whole lines.
 
-const MESSAGE_STEP_LINES = 3;            // → and ← move the text this many lines
-const MESSAGE_WHEEL_PX_PER_LINE = 40;    // wheel or trackpad travel for one line
+const MESSAGE_STEP_LINES = 3;            // → and ← move the text this many lines; ↓ and ↑ one
+const MESSAGE_HOLD_LINE_MS = 80;         // held down, they move it a line this often
+const MESSAGE_HOLD_FAST_LINE_MS = 25;    // and with Shift held too, this often
+const MESSAGE_WHEEL_PX_PER_SCREEN = 720;  // wheel or trackpad travel, in this window, for a screenful
+const MESSAGE_ROLL_STREAM_MS = 60;       // rolls closer together than this are one stream
 
 // The projector's footer: the message's title and code, or for the book, the
 // chapter's title and the book's name.
@@ -656,16 +660,20 @@ function messageLayout(work, paragraphs) {
 
 // What the projector is sent: the paragraphs from `win.first` to `win.last`
 // and the place to show at the top of the screen. `jump` asks it to fade to
-// the place as to a new slide, rather than glide there.
-function messageSlidePayload(work, paragraphs, win, anchor, jump) {
+// the place as to a new slide, rather than glide there; `close`, to keep close
+// behind a stream of moves (a turning wheel) rather than glide at its ease.
+function messageSlidePayload(work, paragraphs, win, anchor, jump, close = false) {
+    const scroll = {
+        first: win.first,
+        paragraphs: paragraphs.slice(win.first, win.last + 1).map(p => p.text),
+        numbers: paragraphs.slice(win.first, win.last + 1).map(p => p.number ?? null),
+        anchor,
+        jump,
+    };
+    if (close) scroll.close = true;
     return {
         mode: 'message',
-        scroll: {
-            first: win.first,
-            paragraphs: paragraphs.slice(win.first, win.last + 1).map(p => p.text),
-            anchor,
-            jump,
-        },
+        scroll,
         footer: messageFooter(work),
         label: '',
         isBlank: false,
@@ -681,33 +689,102 @@ function messageSlidePayload(work, paragraphs, win, anchor, jump) {
 }
 
 // Show the message with `place` ({paragraph, line}) at the top of the screen,
-// or as near as the end of the message allows. The reader's highlight follows
-// the paragraph at the top (or goes to `highlight`), unless `followReader` is
-// false.
+// or as near as the end of the message allows; `part` (0 to 1) of the way on
+// to the next line, where the wheel has left it. The reader's highlight
+// follows the paragraph at the top (or goes to `highlight`), unless
+// `followReader` is false. `roll` says the text is being rolled from where it
+// was, so the reader rolls with it (see rollMessageReader); `close` is for the
+// projector (see messageSlidePayload).
 //
-// messageState.live: {work, paragraphs, place, offset (where its line starts),
-// shown (lines on screen), window (paragraphs sent), screen ({first, last}
-// paragraphs on screen)}.
+// messageState.live: {work, paragraphs, place, part, offset (where its line
+// starts), shown (lines on screen), window (paragraphs sent), screen ({first,
+// last} paragraphs on screen)}.
 function showMessagePlace(work, paragraphs, place,
-    { jump = false, keepBlank = false, followReader = true, highlight = null } = {}) {
+    { jump = false, keepBlank = false, followReader = true, highlight = null, part = 0, roll = false, close = false } = {}) {
     if (!paragraphs.length) return;
     const layout = messageLayout(work, paragraphs);
-    const top = messageClampTop(layout, place);
+    // Clamped to the message's ends, where the text rests on a whole line.
+    const { place: top, part: partOn } = messageMovePart(layout, messageClampTop(layout, place), part, 0);
     const shown = messageLinesShown(layout, top);
     const prev = messageState.live;
-    const win = !jump && prev?.work.code === work.code && messageWindowCovers(prev.window, layout, top, shown)
+    const sameMessage = !jump && prev?.work.code === work.code;
+    const win = sameMessage && messageWindowCovers(prev.window, layout, top, shown)
         ? prev.window : messageWindowFor(layout, top, shown);
+    // Part of a line on, part of one more line shows at the foot.
+    const screen = { first: top.paragraph, last: messageMoveLines(layout, top, partOn ? shown : shown - 1).paragraph };
+    const sameScreen = sameMessage && compareMessagePlaces(prev.place, top) === 0 && prev.screen.last === screen.last;
     const anchor = { paragraph: top.paragraph, offset: messageOffsetOf(layout, top) };
-    messageState.live = {
-        work, paragraphs, place: top, offset: anchor.offset, shown, window: win,
-        screen: { first: top.paragraph, last: messageMoveLines(layout, top, shown - 1).paragraph },
-    };
+    if (partOn) anchor.part = partOn;
     const inReader = followReader && messageState.message?.work.code === work.code;
+    const rollReader = roll && sameMessage && inReader && highlight == null;
+    if (rollReader) holdMessageReader(layout);
+    messageState.live = { work, paragraphs, place: top, part: partOn, offset: anchor.offset, shown, window: win, screen };
     if (inReader) messageState.highlighted = highlight ?? top.paragraph;
-    sendSlideToProjector('message', messageSlidePayload(work, paragraphs, win, anchor, jump),
+    sendSlideToProjector('message', messageSlidePayload(work, paragraphs, win, anchor, jump, close),
         elements.messagePreviewFrame, { keepBlank });
-    markMessageParagraphs();
-    if (inReader) scrollMessageParagraph(messageState.highlighted);
+    const sameMarks = sameScreen && highlight == null && prev.screen.first === screen.first;
+    if (!sameMarks) markMessageParagraphs();
+    if (rollReader) {
+        rollMessageReader(layout);
+        return;
+    }
+    messageReaderLead = null;
+    if (!sameMarks && inReader) scrollMessageParagraph(messageState.highlighted);
+}
+
+// ---- The reader rolls with the screen ----------------------------------------
+//
+// While the text on screen is rolled, the reader rolls with it: the line at
+// the top of the screen is kept at one height in the reader. A paragraph
+// takes a different number of lines in the reader and on the screen, so
+// heights are matched by the share of the way through each paragraph. (The
+// reader's text is smaller, so it moves less far than the screen's does.)
+
+let messageReaderLead = null;     // how far down the reader the top of the screen is kept (px)
+let messageReaderSetTop = null;   // where the reader was last rolled to
+
+// How far down the reader's text a line of the screen's starts (px), or null
+// if the reader does not show its paragraph.
+function messageReaderLineY(layout, place) {
+    const grid = messageEl('messageParagraphs');
+    const textEl = grid.querySelector(`.message-paragraph[data-index="${place.paragraph}"] .verse-card-text`);
+    if (!textEl) return null;
+    const box = textEl.getBoundingClientRect();
+    const lines = Math.max(1, layout.starts(place.paragraph).length);
+    return box.top - grid.getBoundingClientRect().top + grid.scrollTop + box.height * place.line / lines;
+}
+
+function messageReaderY(layout, place, part) {
+    const here = messageReaderLineY(layout, place);
+    if (here == null || !part) return here;
+    const next = messageNextLine(layout, place, 1);
+    const there = next ? messageReaderLineY(layout, next) : null;
+    return there == null ? here : here + part * (there - here);
+}
+
+// Before the screen is rolled: note the height in the reader of the top of the
+// screen, to keep it there. It is wherever it is as rolling begins, brought
+// within the reader's upper half, and is taken afresh if the operator has
+// scrolled the reader since.
+const MESSAGE_READER_LEAD_MIN = 16;
+function holdMessageReader(layout) {
+    const live = messageState.live;
+    const grid = messageEl('messageParagraphs');
+    if (messageReaderLead != null && grid.scrollTop === messageReaderSetTop) return;
+    const y = messageReaderY(layout, live.place, live.part);
+    messageReaderLead = y == null ? null
+        : Math.max(MESSAGE_READER_LEAD_MIN, Math.min(grid.clientHeight / 2, y - grid.scrollTop));
+}
+
+// After it is rolled: roll the reader to match.
+function rollMessageReader(layout) {
+    const live = messageState.live;
+    const grid = messageEl('messageParagraphs');
+    const y = messageReaderY(layout, live.place, live.part);
+    if (y == null) return;
+    if (messageReaderLead == null) messageReaderLead = MESSAGE_READER_LEAD_MIN;
+    grid.scrollTop = y - messageReaderLead;
+    messageReaderSetTop = grid.scrollTop;
 }
 
 // Project from the reader: from `offset` in the paragraph (where it was
@@ -724,57 +801,136 @@ function projectFromReader(index, offset = null) {
     showMessagePlace(work, paragraphs, messagePlaceAt(layout, index, at ?? 0), { jump: true, highlight: index });
 }
 
-// Move the message on screen `n` lines on (or back), even if the reader has
-// since moved on to another message. Like a song's verses, moving leaves a
-// blanked screen blank. False when no message is on screen.
-function moveLiveMessage(n) {
+// Move the message on screen `lines` on (or back), even if the reader has
+// since moved on to another message. The keys move by whole lines, from the
+// nearest whole line (`whole`); the wheel by parts of a line too, and the text
+// stays where it leaves it. Like a song's verses, moving leaves a blanked
+// screen blank. False when no message is on screen.
+function moveLiveMessage(lines, { whole = false, close = false } = {}) {
     const live = messageState.live;
     if (state.liveSlide?.kind !== 'message' || !live) return false;
     const layout = messageLayout(live.work, live.paragraphs);
     // From where its line starts, since the lines may have broken afresh.
     const from = messagePlaceAt(layout, live.place.paragraph, live.offset);
-    const to = messageClampTop(layout, messageMoveLines(layout, from, n));
-    if (compareMessagePlaces(to, live.place) !== 0) {
-        showMessagePlace(live.work, live.paragraphs, to, { keepBlank: true });
+    const to = messageMovePart(layout, from, whole ? Math.round(live.part) : live.part, lines);
+    if (compareMessagePlaces(to.place, live.place) !== 0 || to.part !== live.part) {
+        showMessagePlace(live.work, live.paragraphs, to.place, { keepBlank: true, part: to.part, roll: true, close });
     }
     return true;
 }
 
-// → / ←: a few lines on or back, or with Shift a screen less a line, so that
-// nothing is passed over unseen.
-function stepLiveMessage(direction, { screen = false } = {}) {
+// → / ←: a few lines on or back (↓ / ↑: `lines`, one), or with Shift a screen
+// less a line, so that nothing is passed over unseen. Held down (`repeat`),
+// the text runs on at a steady pace, by the clock and not by how fast the
+// keyboard repeats: a line every MESSAGE_HOLD_LINE_MS, or with Shift every
+// MESSAGE_HOLD_FAST_LINE_MS.
+let messageHoldAt = null;   // when a held key last moved the text
+function stepLiveMessage(direction, { screen = false, repeat = false, lines = MESSAGE_STEP_LINES } = {}) {
     const live = messageState.live;
     if (state.liveSlide?.kind !== 'message' || !live) return false;
     const most = Math.max(1, live.shown - 1);
-    return moveLiveMessage(direction * (screen ? most : Math.min(MESSAGE_STEP_LINES, most)));
+    if (!repeat) {
+        messageHoldAt = null;
+        return moveLiveMessage(direction * (screen ? most : Math.min(lines, most)), { whole: true });
+    }
+    const now = performance.now();
+    const every = screen ? MESSAGE_HOLD_FAST_LINE_MS : MESSAGE_HOLD_LINE_MS;
+    if (messageHoldAt == null) messageHoldAt = now;   // the press itself has just moved it
+    const due = Math.floor((now - messageHoldAt) / every);
+    if (due > 0) {
+        messageHoldAt += due * every;
+        moveLiveMessage(direction * Math.min(due, most), { whole: true });
+    }
+    return true;
 }
 
-// The mouse wheel or trackpad over the preview moves the text a line for
-// every MESSAGE_WHEEL_PX_PER_LINE of travel, sent at most once a frame and,
-// like Shift and an arrow, at most a screen less a line at a time.
-let messageWheelTravel = 0;
-let messageWheelLines = 0;
-let messageWheelFrame = null;
-function onMessageWheel(e) {
-    if (state.liveSlide?.kind !== 'message' || !messageState.live) return;
-    e.preventDefault();
-    const scale = e.deltaMode === 1 ? MESSAGE_WHEEL_PX_PER_LINE
-        : e.deltaMode === 2 ? MESSAGE_WHEEL_PX_PER_LINE * Math.max(1, messageState.live.shown - 1) : 1;
-    // A change of direction starts afresh rather than first undoing what was left over.
-    if (Math.sign(e.deltaY) !== Math.sign(messageWheelTravel)) messageWheelTravel = 0;
-    messageWheelTravel += e.deltaY * scale;
-    const lines = Math.trunc(messageWheelTravel / MESSAGE_WHEEL_PX_PER_LINE);
-    if (!lines) return;
-    messageWheelTravel -= lines * MESSAGE_WHEEL_PX_PER_LINE;
-    messageWheelLines += lines;
-    if (messageWheelFrame == null) {
-        messageWheelFrame = requestAnimationFrame(() => {
-            messageWheelFrame = null;
-            const most = Math.max(1, (messageState.live?.shown ?? 1) - 1);
-            const n = Math.max(-most, Math.min(most, messageWheelLines));
-            messageWheelLines = 0;
-            moveLiveMessage(n);
-        });
+// ↓ / ↑ roll the text on screen a line, unless the operator has the reader's
+// highlight on something else (another message, or a search result off the
+// screen): then they move the highlight, for Enter to project.
+function messageReaderElsewhere() {
+    if (!messageReaderShown() || messageState.highlighted == null) return false;
+    const live = messageState.live;
+    const at = messageState.highlighted;
+    return !(state.liveSlide?.kind === 'message' && live && messageState.message.work.code === live.work.code
+        && at >= live.screen.first && at <= live.screen.last);
+}
+
+function rollLiveMessageByKey(direction, { screen = false, repeat = false } = {}) {
+    if (messageReaderElsewhere()) return false;
+    return stepLiveMessage(direction, { screen, repeat, lines: 1 });
+}
+
+// The mouse wheel or trackpad rolls the text as it would a page, and the text
+// stays where the wheel leaves it. Travel is counted in px and turned into
+// lines once a frame:
+//   screen — over the projector window itself: the text moves as far as the
+//            wheel does;
+//   page   — in this window, over the reader or the preview: the text moves
+//            as if the screen were a page here, a screenful for every
+//            MESSAGE_WHEEL_PX_PER_SCREEN, whatever the projector's size.
+// At most a screen less a line is moved at a time. False when no message is
+// on screen.
+const messageRoll = { screen: 0, page: 0, frame: null, at: null };
+function rollLiveMessage(source, px) {
+    if (state.liveSlide?.kind !== 'message' || !messageState.live) return false;
+    if (!Number.isFinite(px) || !px) return true;
+    messageRoll[source] += px;
+    if (messageRoll.frame == null) messageRoll.frame = requestAnimationFrame(sendMessageRoll);
+    return true;
+}
+
+function sendMessageRoll() {
+    const roll = messageRoll;
+    const travel = { screen: roll.screen, page: roll.page };
+    roll.frame = null;
+    roll.screen = roll.page = 0;
+    const live = messageState.live;
+    if (state.liveSlide?.kind !== 'message' || !live) return;
+    const layout = messageLayout(live.work, live.paragraphs);
+    const most = Math.max(1, live.shown - 1);
+    // (An unmeasured layout counts in lines: a pitch of 1.)
+    const lines = travel.screen / (layout.pitch > 2 ? layout.pitch : MESSAGE_WHEEL_PX_PER_SCREEN / layout.view)
+        + travel.page * layout.view / (layout.pitch * MESSAGE_WHEEL_PX_PER_SCREEN);
+    // A stream of moves (a trackpad, a spinning wheel) is followed closely; a
+    // move on its own (one notch of a wheel) glides.
+    const now = performance.now();
+    const close = roll.at != null && now - roll.at < MESSAGE_ROLL_STREAM_MS;
+    roll.at = now;
+    moveLiveMessage(Math.max(-most, Math.min(most, lines)), { close });
+}
+
+// The wheel's travel in px: some mice report lines or pages instead.
+function messageWheelPx(e) {
+    if (e.deltaMode === 1) return e.deltaY * 40;
+    if (e.deltaMode === 2) return e.deltaY * MESSAGE_WHEEL_PX_PER_SCREEN * 0.8;
+    return e.deltaY;
+}
+
+function onMessagePreviewWheel(e) {
+    if (rollLiveMessage('page', messageWheelPx(e))) e.preventDefault();
+}
+
+// Over the reader, the wheel rolls the screen (and the reader with it) while
+// the reader is on what the screen shows. With Option (Alt) held, or once the
+// highlight is on something else, it scrolls the reader alone, to look ahead.
+function onMessageReaderWheel(e) {
+    if (e.altKey || e.ctrlKey || e.metaKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    if (!messageReaderShown() || messageReaderElsewhere()) return;
+    if (rollLiveMessage('page', messageWheelPx(e))) e.preventDefault();
+}
+
+// The projector window passes on what it is given, so that it need not be
+// clicked away from: the wheel rolls the text, and keys are taken as if
+// pressed here (see the keydown handler in app.js).
+function onProjectorInput(payload) {
+    let data = payload;
+    try { if (typeof data === 'string') data = JSON.parse(data); } catch (e) { return; }
+    if (!data || typeof data !== 'object') return;
+    if (data.wheel != null) rollLiveMessage('screen', Number(data.wheel));
+    if (typeof data.key === 'string' && data.key && data.key !== 'Escape') {
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: data.key, shiftKey: !!data.shift, repeat: !!data.repeat, bubbles: true, cancelable: true,
+        }));
     }
 }
 
@@ -835,7 +991,7 @@ function refreshLiveMessage() {
     if (!live || state.liveSlide?.kind !== 'message') return;
     const layout = messageLayout(live.work, live.paragraphs);
     showMessagePlace(live.work, live.paragraphs, messagePlaceAt(layout, live.place.paragraph, live.offset),
-        { keepBlank: true, followReader: false });
+        { keepBlank: true, followReader: false, part: live.part });
 }
 
 function messageReaderShown() {
@@ -849,7 +1005,8 @@ function projectHighlightedParagraph() {
     return true;
 }
 
-// ↑ / ↓ in the reader: move the highlight without projecting.
+// ↑ / ↓ in the reader, when they are not rolling the screen: move the
+// highlight without projecting.
 function moveParagraphHighlight(direction) {
     if (!messageReaderShown() || messageState.highlighted == null) return false;
     const last = messageState.message.paragraphs.length - 1;
@@ -925,7 +1082,8 @@ function initMessageListeners() {
         projectFromReader(Number(card.dataset.index), messageClickOffset(e, card));
     });
 
-    messageEl('messagePreviewSurface').addEventListener('wheel', onMessageWheel, { passive: false });
+    messageEl('messagePreviewSurface').addEventListener('wheel', onMessagePreviewWheel, { passive: false });
+    messageEl('messageParagraphs').addEventListener('wheel', onMessageReaderWheel, { passive: false });
 
     // The measuring copy of the projector page has loaded, or loaded a font.
     window.addEventListener('message', (e) => {

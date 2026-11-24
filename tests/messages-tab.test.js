@@ -523,6 +523,7 @@ test('a chosen paragraph goes to the top of the screen, with the paragraphs arou
     assert.equal(slide.scroll.first, 0);
     assert.equal(slide.scroll.paragraphs.length, 3);
     assert.equal(slide.scroll.paragraphs[1], LONG_TEXT);
+    assert.deepEqual(slide.scroll.numbers, [1, 2, 3], "each paragraph's number goes with it");
     assert.deepEqual(top(), { paragraph: 1, offset: 0 });
     assert.equal(slide.scroll.jump, true, 'it fades in, as a new slide does');
     assert.deepEqual(onScreenCards(), ['1']);
@@ -604,30 +605,200 @@ test('a click in the reader projects from the line clicked', async () => {
     assert.deepEqual(top(), { paragraph: 1, offset: 0 }, 'a webview that cannot say: the start');
 });
 
-test('the mouse wheel over the preview moves the text a line for each 40 px', async () => {
-    await openLong();
-    const wheel = (deltaY) => {
-        const e = new app.window.WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true });
-        app.$('#messagePreviewSurface').dispatchEvent(e);
-        return e.defaultPrevented;
-    };
-    assert.equal(wheel(100), false, 'nothing on screen: the wheel is left alone');
-    await app.click(paragraphCards()[0]);
-    assert.equal(wheel(100), true);
-    await app.sleep(40);
-    assert.deepEqual(top(), { paragraph: 1, offset: LINES[1] }, 'two lines, with 20 px over');
-    wheel(20);
-    await app.sleep(40);
-    assert.deepEqual(top(), { paragraph: 1, offset: LINES[2] });
-    wheel(-40);
-    await app.sleep(40);
-    assert.deepEqual(top(), { paragraph: 1, offset: LINES[1] }, 'back the other way, nothing left over');
+const wheelOver = (selector, deltaY, init = {}) => {
+    const e = new app.window.WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true, ...init });
+    app.$(selector).dispatchEvent(e);
+    return e.defaultPrevented;
+};
 
-    // A hard flick moves no more than Shift and an arrow would.
+test('the mouse wheel over the preview rolls the text with it, and the text stays where the wheel leaves it', async () => {
+    await openLong();
+    const wheel = (deltaY) => wheelOver('#messagePreviewSurface', deltaY);
+    assert.equal(wheel(300), false, 'nothing on screen: the wheel is left alone');
     await app.click(paragraphCards()[0]);
-    wheel(4000);
+    assert.equal(wheel(300), true);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[1], part: 0.5 },
+        '720 px a screenful, here six lines: two and a half lines on');
+    assert.equal(app.onScreen().scroll.jump, false);
+    assert.equal(highlighted(), '1', 'the reader follows');
+    const sent = app.projected().length;
+    await app.sleep(300);
+    assert.equal(app.projected().length, sent, 'left alone, it stays part-way down a line, as a page does');
+    wheel(30);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[1], part: 0.75 });
+    wheel(-210);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[0] }, 'back a line and three quarters');
+
+    // A key moves by whole lines, from the whole line nearest where the wheel left it.
+    wheel(48);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[0], part: 0.4 });
+    await app.press('ArrowRight');
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[3] }, 'three lines on from the line it was nearest');
+    wheel(72);
+    await app.sleep(40);
+    await app.press('ArrowRight');
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[6] }, 'past half-way, the nearest is the next line (held at the end)');
+
+    // A hard flick moves no more than Shift and an arrow would, and the ends stop it on a whole line.
+    await app.click(paragraphCards()[0]);
+    wheel(12000);
     await app.sleep(40);
     assert.deepEqual(top(), { paragraph: 1, offset: LINES[3] }, 'four lines: a screen of five, less one');
+    wheel(390);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[6] }, 'the end of the message');
+    await app.click(paragraphCards()[0]);
+    wheel(-90);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 0, offset: 0 }, 'and its start');
+});
+
+test('a turning wheel is followed closely; one move on its own glides', async () => {
+    await openLong();
+    await app.click(paragraphCards()[0]);
+    wheelOver('#messagePreviewSurface', 20);
+    await app.sleep(120);
+    assert.equal(app.onScreen().scroll.close, undefined, 'the first move, like one notch of a mouse wheel');
+    for (let i = 0; i < 3; i++) {
+        const sent = app.projected().length;
+        wheelOver('#messagePreviewSurface', 20);
+        await app.until(() => app.projected().length > sent, 'the move to be sent');
+    }
+    assert.equal(app.onScreen().scroll.close, true, 'moves one after another');
+    await app.press('ArrowRight');
+    assert.equal(app.onScreen().scroll.close, undefined, 'a key glides');
+});
+
+test('↓ and ↑ roll the text on screen a line; with the highlight elsewhere they move the highlight', async () => {
+    await openLong();
+    await app.click(paragraphCards()[1]);
+    await app.press('ArrowDown');
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[1] }, 'a line on');
+    assert.equal(app.onScreen().scroll.jump, false, 'it glides');
+    await app.press('ArrowDown', { shiftKey: true });
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[6] }, 'with Shift a screen less a line, held at the end');
+    await app.press('ArrowUp');
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[5] });
+    assert.equal(highlighted(), '1', 'the highlight stays with the screen');
+
+    // A search result elsewhere takes the highlight: the arrows are for choosing again.
+    await app.click(paragraphCards()[0]);
+    await typeAndWait('way home');
+    await app.click('.message-hit[data-paragraph-id="12"]');
+    await app.until(() => highlighted() === '2', 'the hit to open');
+    const sent = app.projected().length;
+    await app.press('ArrowUp');
+    assert.equal(highlighted(), '1', 'the highlight moved');
+    assert.equal(app.projected().length, sent, 'and the screen did not');
+    await app.press('ArrowRight');
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[2] }, '→ still moves the text on screen');
+});
+
+// The reader, as these tests lay it out: each paragraph's text 90 px high,
+// 100 px apart, in a reader 400 px high. So the long paragraph's nine lines
+// on screen are 10 px each in the reader.
+const layOutReader = () => {
+    const grid = app.$('#messageParagraphs');
+    Object.defineProperty(grid, 'clientHeight', { value: 400, configurable: true });
+    grid.getBoundingClientRect = () => ({ top: 50, height: 400 });
+    paragraphCards().forEach((card, i) => {
+        card.querySelector('.verse-card-text').getBoundingClientRect = () => ({ top: 50 + i * 100 - grid.scrollTop, height: 90 });
+    });
+    return grid;
+};
+
+test('the wheel over the reader rolls the screen, and the reader rolls with it', async () => {
+    await openLong();
+    const grid = layOutReader();
+    const wheel = (deltaY, init) => wheelOver('#messageParagraphs', deltaY, init);
+    assert.equal(wheel(50), false, 'nothing on screen: the reader scrolls as usual');
+    await app.click(paragraphCards()[0]);
+    assert.equal(wheel(180), true);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[0], part: 0.5 }, 'a line and a half on');
+    assert.equal(grid.scrollTop, 89,
+        'the reader has rolled to half-way down the first of the nine lines (105 px), less the 16 px kept above it');
+    wheel(240);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[2], part: 0.5 });
+    assert.equal(grid.scrollTop, 109, 'two lines on the screen are 20 px in the reader');
+    wheel(-300);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[0] });
+    assert.equal(grid.scrollTop, 84);
+
+    // With Option held the reader is scrolled alone, to look ahead.
+    const sent = app.projected().length;
+    assert.equal(wheel(120, { altKey: true }), false);
+    await app.sleep(40);
+    assert.equal(app.projected().length, sent);
+
+    // Scrolled away, the next roll brings the reader back to the screen's place.
+    grid.scrollTop = 0;
+    wheel(120);
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[1] });
+    assert.equal(grid.scrollTop, 10, 'where the top of the screen was in the reader (100 px down) is kept');
+});
+
+test('with the reader on something else, the wheel over it scrolls the reader alone', async () => {
+    await openLong();
+    layOutReader();
+    await app.click(paragraphCards()[0]);
+    await typeAndWait('way home');
+    await app.click('.message-hit[data-paragraph-id="12"]');
+    await app.until(() => highlighted() === '2', 'the hit to open');
+    const sent = app.projected().length;
+    assert.equal(wheelOver('#messageParagraphs', 120), false);
+    await app.sleep(40);
+    assert.equal(app.projected().length, sent);
+    assert.equal(wheelOver('#messagePreviewSurface', 120), true, 'the preview still rolls the screen');
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[0] });
+    assert.equal(highlighted(), '1', 'and the reader is back with the screen');
+});
+
+test('the projector window passes on the wheel and the keys, as if they were the operator\'s', async () => {
+    await openLong();
+    await app.click(paragraphCards()[0]);
+    await app.emit('projector-input', { wheel: 25 });
+    await app.sleep(40);
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[1], part: 0.5 }, '25 px of the screen, at 10 px a line');
+    await app.emit('projector-input', { key: 'ArrowDown', shift: false, repeat: false });
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[3] }, 'a line on from the nearest whole line');
+    await app.emit('projector-input', JSON.stringify({ key: 'ArrowRight', shift: true, repeat: false }));
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[6] });
+    await app.emit('projector-input', { key: ' ' });
+    assert.equal(app.onScreen().isBlank, true, 'Space blanks the screen');
+    await app.emit('projector-input', { key: ' ' });
+    assert.equal(app.onScreen().isBlank, false);
+    const sent = app.projected().length;
+    await app.emit('projector-input', { key: 'Escape' });
+    await app.emit('projector-input', 'not json');
+    await app.emit('projector-input', null);
+    assert.equal(app.projected().length, sent, 'Escape is the projector window\'s own, and nonsense is ignored');
+});
+
+test('a held arrow runs the text on by the clock, not by how fast the keyboard repeats', async () => {
+    await openLong({ view: 30 });                    // two or three lines to a screen, so there is room to run
+    await app.click(paragraphCards()[0]);
+    const line = () => LINES.indexOf(top().offset);
+    await app.press('ArrowRight');
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[0] }, 'the press: a screen less a line');
+    for (let i = 0; i < 12; i++) await app.press('ArrowRight', { repeat: true });
+    assert.ok(line() <= 1, `a dozen repeats at once move a line at most, not a dozen: ${line()}`);
+    const before = line();
+    await app.sleep(170);
+    await app.press('ArrowRight', { repeat: true });
+    assert.ok(line() - before >= 2 && line() - before <= 3, `two lines in 170 ms, at 80 ms a line: ${line() - before}`);
+    assert.equal(app.onScreen().scroll.jump, false);
+    const held = line();
+    await app.press('ArrowLeft');
+    assert.equal(line(), held - 2, 'a fresh press steps as before: a screen of three lines, less one');
 });
 
 test('changing the text size breaks the lines afresh, keeping the text at the top on screen', async () => {
@@ -652,15 +823,15 @@ test('changing the text size breaks the lines afresh, keeping the text at the to
 
 test('breaking the lines afresh leaves the reader\'s highlight alone', async () => {
     await openLong();
-    await app.click(paragraphCards()[1]);
-    await app.press('ArrowDown');
-    assert.equal(highlighted(), '2');
+    await app.click(paragraphCards()[2]);
+    assert.equal(highlighted(), '2', 'not the paragraph at the top of the screen');
+    assert.deepEqual(onScreenCards(), ['1', '2']);
     const before = app.measured.length;
     await app.emit('projector-size', { width: 1440, height: 1080 });
     await app.until(() => app.measured.length > before, 'the lines to be measured again');
     await app.sleep(20);
-    assert.equal(highlighted(), '2', 'still where the operator moved it');
-    assert.deepEqual(onScreenCards(), ['1']);
+    assert.equal(highlighted(), '2', 'still where the operator put it');
+    assert.deepEqual(onScreenCards(), ['1', '2']);
 });
 
 test('lines are measured at the projector\'s size once it has said, and the message on screen keeps its place', async () => {

@@ -390,6 +390,20 @@ test('notes in a message keep their brackets, and markup is shown, not run', asy
     ]);
 });
 
+test("a paragraph's number rides beside it, and is no part of its text", async () => {
+    p = await bootProjector({ settings: cut });
+    await p.send('update-lyrics', message({ numbers: [41, null] }));
+    const [first, second] = p.document.querySelectorAll('#lyricsText .message-para');
+    assert.equal(first.dataset.number, '41', 'drawn in the margin by the stylesheet');
+    assert.equal(first.textContent, LAMPS[0], 'so lines break and are counted as without it');
+    assert.equal(second.hasAttribute('data-number'), false, 'none given: none shown');
+
+    await p.send('update-lyrics', message({ numbers: ['7"><b>x</b>', 12] }));
+    assert.equal(p.document.querySelector('#lyricsText b'), null, 'a number is text, not markup');
+    await p.send('update-lyrics', message());
+    assert.equal(p.document.querySelector('#lyricsText [data-number]'), null, 'no numbers sent');
+});
+
 test('moving on within the paragraphs it has glides there, without fading or drawing them again', async () => {
     p = await bootProjector();                       // the default fade
     await p.send('update-lyrics', message());
@@ -516,4 +530,56 @@ test('the projector window tells the operator its size; a preview does not', asy
     p.close();
     p = await bootProjector({ settings: cut, tauri: false });
     assert.deepEqual(p.emitted, []);
+});
+
+test('the projector window passes the wheel and the keys on to the operator', async () => {
+    p = await bootProjector({ settings: cut });
+    const inputs = () => p.emitted.filter(e => e.name === 'projector-input').map(e => e.payload);
+    const key = (init) => {
+        const e = new p.window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+        p.document.dispatchEvent(e);
+        return e.defaultPrevented;
+    };
+    const wheel = (deltaY, init = {}) => {
+        const e = new p.window.WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true, ...init });
+        p.document.body.dispatchEvent(e);
+        return e.defaultPrevented;
+    };
+    assert.equal(key({ key: 'ArrowRight' }), true);
+    assert.equal(key({ key: 'ArrowDown', shiftKey: true, repeat: true }), true);
+    assert.equal(key({ key: 'Shift' }), false, 'a modifier on its own is nothing');
+    assert.equal(key({ key: 'q', metaKey: true }), false, 'the system keeps its own shortcuts');
+    assert.deepEqual(inputs(), [
+        { key: 'ArrowRight', shift: false, repeat: false },
+        { key: 'ArrowDown', shift: true, repeat: true },
+    ]);
+    key({ key: 'Escape' });
+    assert.equal(p.closed.length, 1, 'Escape still closes the window');
+    assert.equal(inputs().length, 2, 'and is not passed on');
+
+    // The wheel is passed on only while a message is on screen, a frame's worth at a time.
+    assert.equal(wheel(30), true, 'the page itself never scrolls');
+    await p.sleep(40);
+    assert.equal(inputs().length, 2);
+    await p.send('update-lyrics', {
+        mode: 'message', songId: 'message-1', title: 'A message', footer: 'A message',
+        scroll: { first: 0, paragraphs: ['One.', 'Two.'], numbers: [1, 2], anchor: { paragraph: 0, offset: 0 }, jump: true },
+    });
+    wheel(30);
+    wheel(12.5);
+    await p.sleep(40);
+    assert.deepEqual(inputs()[2], { wheel: 42.5 });
+    wheel(-3, { deltaMode: 1 });
+    await p.sleep(40);
+    assert.ok(inputs()[3].wheel < -3, 'a wheel that counts in lines is turned into px');
+});
+
+test('a preview or measuring copy of the projector page keeps the wheel and keys to itself', async () => {
+    p = await bootProjector({ settings: cut, tauri: false });
+    const e = new p.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+    p.document.dispatchEvent(e);
+    assert.equal(e.defaultPrevented, false);
+    const w = new p.window.WheelEvent('wheel', { deltaY: 30, bubbles: true, cancelable: true });
+    p.document.body.dispatchEvent(w);
+    assert.equal(w.defaultPrevented, false);
 });

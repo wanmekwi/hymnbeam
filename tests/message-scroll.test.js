@@ -13,6 +13,7 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'frontend', 'js', 'me
 const {
     messageLineAt, messagePlaceAt, messageOffsetOf, messageMoveLines, messageLinesShown, messageLastTop,
     messageClampTop, messageWindowFor, messageWindowCovers, messageEstimatedStarts, messageHitOffset,
+    messageMovePart, messageGlideStep, messageGlideArrived,
 } = context;
 
 // Results are copied out of the script's own realm, so deepEqual compares values only.
@@ -79,6 +80,58 @@ test('the paragraphs sent run from two screens above to four below, and do until
     assert.equal(messageWindowCovers(win, layout, at(47, 0), 5), false, 'a screen back would pass the first');
     assert.equal(messageWindowCovers(null, layout, at(50, 0), 5), false);
     assert.deepEqual(plain(messageWindowFor(layout, at(0, 0), 5)), { first: 0, last: 10 }, 'clipped at the start');
+});
+
+test('the wheel moves by parts of a line, and neither end of the message is passed', () => {
+    const layout = layoutOf([3, 30]);                 // ten lines to a screen
+    const move = (place, part, lines) => plain(messageMovePart(layout, place, part, lines));
+    assert.deepEqual(move(at(0, 0), 0, 0.25), { place: at(0, 0), part: 0.25 });
+    assert.deepEqual(move(at(0, 0), 0.25, 0.5), { place: at(0, 0), part: 0.75 });
+    assert.deepEqual(move(at(0, 0), 0.75, 0.5), { place: at(0, 1), part: 0.25 }, 'on into the next line');
+    assert.deepEqual(move(at(0, 2), 0.5, 1), { place: at(1, 0), part: 0.5 }, 'and the next paragraph');
+    assert.deepEqual(move(at(0, 1), 0.25, -0.5), { place: at(0, 0), part: 0.75 }, 'back');
+    assert.deepEqual(move(at(0, 1), 0, -3.5), { place: at(0, 0), part: 0 }, 'the start: a whole line');
+    assert.deepEqual(move(at(0, 0), 0, -0.25), { place: at(0, 0), part: 0 });
+    const last = plain(messageLastTop(layout));
+    assert.deepEqual(move(at(1, 5), 0.5, 100), { place: last, part: 0 }, 'the end: a whole line');
+    assert.deepEqual(move(last, 0, 0.5), { place: last, part: 0 });
+    assert.deepEqual(move(at(0, 0), 0.1, 0.2 + 0.7), { place: at(0, 1), part: 0 }, 'a rounding hair short of a line is the line');
+});
+
+test('a glide sets off gently, arrives gently and does not overshoot', () => {
+    let pos = 0;
+    let speed = 0;
+    const speeds = [];
+    for (let i = 0; i < 120; i++) {                   // two seconds of frames
+        ({ pos, speed } = messageGlideStep(pos, speed, 300, 1 / 60));
+        speeds.push(speed);
+        assert.ok(pos <= 300 && pos >= 0, `never past the target: ${pos}`);
+    }
+    const peak = Math.max(...speeds);
+    assert.ok(speeds[0] < 0.5 * peak, 'it does not set off at full speed');
+    assert.ok(speeds.indexOf(peak) > 3, 'the speed builds up over several frames');
+    for (let i = 1; i < speeds.length; i++) {
+        assert.ok(Math.abs(speeds[i] - speeds[i - 1]) < 0.4 * peak, 'and never leaps between frames');
+    }
+    assert.equal(messageGlideArrived(pos, speed, 300), true, 'there within two seconds');
+    assert.equal(messageGlideArrived(150, 0, 300), false);
+    assert.equal(messageGlideArrived(300, 80, 300), false, 'passing through is not arriving');
+});
+
+test('a glide moves the same whatever the frame rate, and a new target keeps its speed', () => {
+    let fine = { pos: 0, speed: 0 };
+    for (let i = 0; i < 30; i++) fine = messageGlideStep(fine.pos, fine.speed, 200, 0.01);
+    const coarse = messageGlideStep(0, 0, 200, 0.3);
+    assert.ok(Math.abs(fine.pos - coarse.pos) < 1e-6 && Math.abs(fine.speed - coarse.speed) < 1e-6);
+
+    // Part-way there, the target moves on: the next frame carries on at the speed it had.
+    const mid = messageGlideStep(0, 0, 200, 0.1);
+    const on = messageGlideStep(mid.pos, mid.speed, 400, 1 / 60);
+    assert.ok(on.speed > 0.9 * mid.speed && on.speed < 1.6 * mid.speed, `${mid.speed} then ${on.speed}`);
+    assert.ok(on.pos > mid.pos);
+    // And turned back, it slows before it turns: no leap.
+    const back = messageGlideStep(mid.pos, mid.speed, 0, 1 / 60);
+    assert.ok(back.speed < mid.speed && back.speed > 0);
 });
 
 test('until lines can be measured, they are guessed at by length, breaking at spaces', () => {

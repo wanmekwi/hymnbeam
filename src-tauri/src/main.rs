@@ -299,14 +299,33 @@ async fn open_projector_window(app: tauri::AppHandle) -> Result<(), String> {
 
     // Notify the operator when the projector window is closed (e.g. Escape key)
     // so the operator can reset its projectorOpen state and update the button.
+    //
+    // On a screen of its own the projector is only ever looked at, but a new
+    // window takes the keyboard, and would keep it until the operator window
+    // was clicked: until then the arrow keys, Space and the rest would go
+    // nowhere. So whenever it is given the keyboard (as it opens, when it has
+    // gone fullscreen, or on a stray click), it hands it straight back.
+    // Beside the operator on a single screen it is an ordinary window, and
+    // keeps what it is given: it passes its keys on itself (projector.js).
     let app_clone = app.clone();
-    projector.on_window_event(move |event| {
-        if let tauri::WindowEvent::Destroyed = event {
+    projector.on_window_event(move |event| match event {
+        tauri::WindowEvent::Destroyed => {
             if let Some(op) = app_clone.get_webview_window("operator") {
                 let _ = op.emit("projector-closed", ());
             }
         }
+        tauri::WindowEvent::Focused(true) if !single_monitor => {
+            if let Some(op) = app_clone.get_webview_window("operator") {
+                let _ = op.set_focus();
+            }
+        }
+        _ => {}
     });
+    if !single_monitor {
+        if let Some(op) = app.get_webview_window("operator") {
+            let _ = op.set_focus();
+        }
+    }
 
     Ok(())
 }

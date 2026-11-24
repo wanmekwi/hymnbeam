@@ -415,6 +415,7 @@ function updateDisplay(data) {
         currentSongId = null;
         messageView = null;
         messageSwapTarget = null;
+        stopMessageGlide();
         elements.blankScreen.classList.add('active');
         elements.songTitleBar.classList.remove('visible');
         elements.songMetaBar.classList.remove('visible');
@@ -450,6 +451,7 @@ function updateDisplay(data) {
     }
     messageView = null;
     messageSwapTarget = null;
+    stopMessageGlide();
 
     const slideVerses = verses && verses.length ? verses : (text ? [text] : []);
     if (songId !== currentSongId) {
@@ -651,9 +653,14 @@ function messageColumn() {
 }
 
 // Draw a run of paragraphs, the first being paragraph `first` of the message.
+// A paragraph's number is an attribute, drawn by the stylesheet in the margin:
+// it is no part of the text, so lines break and are counted as without it.
 function drawMessageColumn(target) {
-    elements.lyricsText.innerHTML = `<div class="message-column">${target.paragraphs.map(text =>
-        `<p class="message-para">${text.trim() ? messageTextToHtml(text) : '&nbsp;'}</p>`).join('')}</div>`;
+    const numbers = target.numbers || [];
+    elements.lyricsText.innerHTML = `<div class="message-column">${target.paragraphs.map((text, i) => {
+        const number = numbers[i] == null || numbers[i] === '' ? '' : ` data-number="${escapeHtml(String(numbers[i]))}"`;
+        return `<p class="message-para"${number}>${text.trim() ? messageTextToHtml(text) : '&nbsp;'}</p>`;
+    }).join('')}</div>`;
     messageColumn().style.fontSize = `${messageFontPct}vh`;
     messageView = {
         songId: target.songId, first: target.first, count: target.paragraphs.length,
@@ -744,72 +751,155 @@ function messageLineTop(column, place, pitch) {
     return box.top - column.getBoundingClientRect().top + place.line * (box.height / lines);
 }
 
-// Where the line holding the view's place is drawn, or null if it is not.
-function messageAnchorTop(column) {
+// Where the view's place is drawn, or null if it is not: how far down the
+// column the top of the screen is to be, and how much to cut off under the
+// last whole line. Part-way between two lines (where the wheel has left it),
+// both are part-way between those lines' values.
+function messageAnchorTarget(column) {
     const v = messageView;
     const metrics = messageMetrics(column);
     const rel = v ? v.anchor.paragraph - v.first : -1;
     if (!metrics || rel < 0 || rel >= v.count) return null;
     const layout = messageWindowLayout(column, metrics);
+    const at = (place) => {
+        const top = messageLineTop(column, place, metrics.pitch);
+        const last = messageMoveLines(layout, place, messageLinesShown(layout, place) - 1);
+        const bottom = messageLineTop(column, last, metrics.pitch) + metrics.pitch;
+        return { top, cut: Math.max(0, metrics.view - (bottom - top)) };
+    };
     const place = messagePlaceAt(layout, rel, v.anchor.offset);
-    return { layout, metrics, place, top: messageLineTop(column, place, metrics.pitch) };
+    const here = at(place);
+    const part = Math.max(0, Math.min(1, Number(v.anchor.part) || 0));
+    const next = part > 0 ? messageNextLine(layout, place, 1) : null;
+    if (!next) return { ...here, lineTop: here.top, view: metrics.view };
+    const there = at(next);
+    return {
+        top: here.top + part * (there.top - here.top),
+        cut: here.cut + part * (there.cut - here.cut),
+        lineTop: here.top,
+        view: metrics.view,
+    };
 }
 
-function setMessageShift(column, y, glide) {
-    column.style.transition = glide ? '' : 'none';
-    column.style.transform = `translateY(${y}px)`;
+// Where the column is and where it is going (see Gliding in message-scroll.js).
+// `y` is how far the column is moved (px, negative is up) and `cut` how much is
+// cut off the foot of the view; each glides to its target at its own speed.
+const MESSAGE_GLIDE_STALL_MS = 250;   // no frame for this long: land without one
+const MESSAGE_FRAME_SECONDS = 1 / 60;  // what a glide's first frame is taken to last
+const messageMotion = {
+    y: 0, speed: 0, toY: 0, cut: 0, cutSpeed: 0, toCut: 0,
+    rate: MESSAGE_GLIDE_RATE,   // how quickly it closes on its target
+    frame: null, watch: null,
+    last: null,      // the time of the last frame drawn, as frames are timed
+    seen: 0,         // when a frame last came, by the clock
+};
+
+function drawMessageMotion() {
+    const column = messageColumn();
+    if (column) column.style.transform = `translateY(${messageMotion.y}px)`;
+    elements.lyricsContainer.style.setProperty('--message-cut', `${Math.max(0, messageMotion.cut)}px`);
 }
 
-// How far the column is moved up now, part-way through a glide included.
-function currentMessageShift(column) {
-    const m = /matrix(3d)?\(([^)]+)\)/.exec(getComputedStyle(column).transform || '');
-    if (m) {
-        const values = m[2].split(',').map(Number);
-        return m[1] ? values[13] : values[5];
+function stopMessageGlide() {
+    const m = messageMotion;
+    if (m.frame != null) cancelAnimationFrame(m.frame);
+    if (m.watch != null) clearInterval(m.watch);
+    m.frame = null;
+    m.watch = null;
+}
+
+// Be there at once.
+function landMessage() {
+    const m = messageMotion;
+    stopMessageGlide();
+    m.y = m.toY;
+    m.cut = m.toCut;
+    m.speed = 0;
+    m.cutSpeed = 0;
+    drawMessageMotion();
+}
+
+// One frame of a glide. `time` is the frame's own time, which keeps step with
+// the screen however late in the frame this runs, so the text moves evenly.
+function messageGlideFrame(time) {
+    const m = messageMotion;
+    m.frame = null;
+    if (!messageView || !messageColumn()) { stopMessageGlide(); return; }
+    // A long gap between frames (a busy moment) is not caught up in one leap.
+    const seconds = m.last == null ? MESSAGE_FRAME_SECONDS : Math.min(0.05, Math.max(0, (time - m.last) / 1000));
+    m.last = time;
+    m.seen = performance.now();
+    ({ pos: m.y, speed: m.speed } = messageGlideStep(m.y, m.speed, m.toY, seconds, m.rate));
+    ({ pos: m.cut, speed: m.cutSpeed } = messageGlideStep(m.cut, m.cutSpeed, m.toCut, seconds, m.rate));
+    if (messageGlideArrived(m.y, m.speed, m.toY) && messageGlideArrived(m.cut, m.cutSpeed, m.toCut)) {
+        landMessage();
+        return;
     }
-    const inline = /translateY\((-?[\d.]+)px\)/.exec(column.style.transform);
-    return inline ? Number(inline[1]) : 0;
+    drawMessageMotion();
+    m.frame = requestAnimationFrame(messageGlideFrame);
 }
 
-// Put the view's place at the top of the screen, showing whole lines only:
-// the space under the last line that fits is cut off, so no line is ever
-// half shown. `glide` moves there smoothly, otherwise it is at once.
+function glideMessage() {
+    const m = messageMotion;
+    if (m.frame == null) {
+        m.last = null;
+        m.seen = performance.now();
+        m.frame = requestAnimationFrame(messageGlideFrame);
+    }
+    // A hidden or covered page is given no frames: the text must still end up
+    // in its place.
+    if (m.watch == null) {
+        m.watch = setInterval(() => {
+            if (performance.now() - m.seen > MESSAGE_GLIDE_STALL_MS) landMessage();
+        }, MESSAGE_GLIDE_STALL_MS);
+    }
+}
+
+// Put the view's place at the top of the screen. On a whole line, whole lines
+// only show: the space under the last line that fits is cut off. Part-way
+// between two lines (where the wheel has left it), the text shows as a page
+// does part-way through a scroll: the top line going off, the next coming on
+// at the foot. `glide` moves there smoothly, otherwise it is at once.
+// Where things are drawn is read here, once a move, and never while gliding.
 function placeMessage(glide) {
     const column = messageColumn();
     if (!column || !messageView) return;
-    const at = messageAnchorTop(column);
-    if (!at) {
-        setMessageShift(column, 0, false);
-        elements.lyricsContainer.style.setProperty('--message-cut', '0px');
-        return;
+    const target = messageAnchorTarget(column);
+    const m = messageMotion;
+    m.toY = target ? -target.top : 0;
+    m.toCut = target ? target.cut : 0;
+    if (glide && target) {
+        // Flung hard, the text may not trail more than a screen behind where
+        // it is going: the paragraphs drawn reach only so far (see
+        // messageWindowCovers), and beyond them the screen would show nothing.
+        if (Math.abs(m.toY - m.y) > target.view) m.y = m.toY - Math.sign(m.toY - m.y) * target.view;
+        glideMessage();
+    } else {
+        landMessage();
     }
-    const { layout, metrics, place, top } = at;
-    const last = messageMoveLines(layout, place, messageLinesShown(layout, place) - 1);
-    const bottom = messageLineTop(column, last, metrics.pitch) + metrics.pitch;
-    setMessageShift(column, -top, glide);
-    elements.lyricsContainer.style.setProperty('--message-cut', `${Math.max(0, metrics.view - (bottom - top))}px`);
 }
 
 // Move to a new place in the message on screen. If it comes with other
 // paragraphs, they are drawn first with the text on screen kept where it is
-// (part-way through a glide included), so the screen never jumps.
+// and moving as it was (part-way through a glide included), so the screen
+// never jumps.
 function scrollMessageTo(target) {
     let column = messageColumn();
     const v = messageView;
     if (v.first !== target.first || v.count !== target.paragraphs.length) {
-        const before = messageAnchorTop(column);
-        const shift = currentMessageShift(column);
+        const before = messageAnchorTarget(column);
         drawMessageColumn({ ...target, anchor: v.anchor });
         column = messageColumn();
-        const after = before && messageAnchorTop(column);
-        if (after) {
-            setMessageShift(column, shift + before.top - after.top, false);
-            getComputedStyle(column).transform;   // settle there before gliding on
-        } else {
+        const after = before && messageAnchorTarget(column);
+        if (!after) {
             messageView.anchor = target.anchor;
             placeMessage(false);
             return;
         }
+        // The line that was at `before.lineTop` down the old column is at
+        // `after.lineTop` down the new one.
+        messageMotion.y += before.lineTop - after.lineTop;
+        drawMessageMotion();
     }
     messageView.anchor = target.anchor;
     placeMessage(true);
@@ -822,9 +912,11 @@ function showMessage(data) {
         songId: data.songId,
         first,
         paragraphs: Array.isArray(s.paragraphs) ? s.paragraphs.map(String) : [],
+        numbers: Array.isArray(s.numbers) ? s.numbers : [],
         anchor: {
             paragraph: Number(s.anchor && s.anchor.paragraph != null ? s.anchor.paragraph : first),
             offset: Number(s.anchor && s.anchor.offset) || 0,
+            part: Number(s.anchor && s.anchor.part) || 0,
         },
     };
     currentText = null;
@@ -838,6 +930,8 @@ function showMessage(data) {
     }
     if (pendingSwapTimer) { clearTimeout(pendingSwapTimer); pendingSwapTimer = null; }
     if (same && messageColumn()) {
+        // A turning wheel is followed closely; a move on its own glides.
+        messageMotion.rate = s.close ? MESSAGE_FOLLOW_RATE : MESSAGE_GLIDE_RATE;
         scrollMessageTo(target);
         return;
     }
@@ -975,6 +1069,49 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+
+// The projector window may have the keyboard (it takes it when it opens) or be
+// under the pointer, and the operator should not have to click away from it
+// first. So it passes what it is given on to the operator, which alone decides
+// what is on screen: the wheel, to roll a message, and the keys, as if pressed
+// there. Escape stays here: it closes this window. Only the real window does
+// this; the previews and the measuring copy are the operator's own.
+const IS_PROJECTOR_WINDOW = !MEASURE_ONLY && window.parent === window;
+
+function sendProjectorInput(data) {
+    const emit = window.__TAURI__?.event?.emit;
+    if (!IS_PROJECTOR_WINDOW || !emit) return false;
+    try { emit('projector-input', data)?.catch?.(() => { /* the operator is gone */ }); }
+    catch (e) { return false; }
+    return true;
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) return;
+    if (sendProjectorInput({ key: e.key, shift: e.shiftKey, repeat: e.repeat })) e.preventDefault();
+});
+
+// The wheel's travel is passed on in px of this screen, at most once a frame.
+let projectorWheelTravel = 0;
+let projectorWheelFrame = null;
+document.addEventListener('wheel', (e) => {
+    if (!IS_PROJECTOR_WINDOW || !window.__TAURI__?.event?.emit) return;
+    e.preventDefault();
+    if (currentMode !== 'message' || e.ctrlKey || e.metaKey) return;
+    const metrics = messageMetrics(messageColumn());
+    const line = metrics ? metrics.pitch : window.innerHeight / 16;
+    projectorWheelTravel += e.deltaMode === 1 ? e.deltaY * line
+        : e.deltaMode === 2 ? e.deltaY * window.innerHeight * 0.8 : e.deltaY;
+    if (projectorWheelFrame == null) {
+        projectorWheelFrame = requestAnimationFrame(() => {
+            projectorWheelFrame = null;
+            const wheel = projectorWheelTravel;
+            projectorWheelTravel = 0;
+            if (wheel) sendProjectorInput({ wheel });
+        });
+    }
+}, { passive: false });
 
 // The projector window goes fullscreen on whatever screen it is given, so it
 // tells the operator its size, which message paragraphs are measured at (see
