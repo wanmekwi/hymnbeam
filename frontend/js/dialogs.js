@@ -45,7 +45,9 @@ const SHORTCUT_GROUPS = [
     {
         title: 'During the service',
         items: [
-            { keys: ['→', '/', '←'], action: 'Next / previous verse' },
+            { keys: ['→', '/', '←'], action: 'Next / previous verse, or paragraph of a message on screen' },
+            { keys: ['↓', '/', '↑'], action: 'Move through the message in the reader' },
+            { keys: ['Enter'], action: 'Project the highlighted paragraph' },
             { keys: ['1'], action: 'Jump to verse 1–9' , label: '1–9' },
             { keys: ['0'], action: 'Jump to verse 10' },
             { keys: ['PgDn', '/', 'PgUp'], action: 'Next / previous item in the open collection' },
@@ -76,7 +78,7 @@ const SHORTCUT_GROUPS = [
         title: 'Getting around',
         items: [
             { keys: ['/'], action: 'Search the song library', literalSlash: true },
-            { keys: ['{ctrl}1', '/', '{ctrl}2', '/', '{ctrl}3'], action: 'Library / Collections / Bible tab' },
+            { keys: ['{ctrl}1', '/', '{ctrl}2', '/', '{ctrl}3', '/', '{ctrl}4'], action: 'Library / Collections / Bible / message tab' },
             { keys: ['[', '/', ']'], action: 'Previous / next sidebar tab' },
             { keys: ['?'], action: 'Show this list' },
         ],

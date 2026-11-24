@@ -2772,3 +2772,208 @@ input.toggle:checked::before {
     line-height: 1.4;
 }
 
+
+/* ---- Message library tab (messages.js) ---------------------------------- */
+
+/* Four tabs share the sidebar's width, each as wide as its label needs and
+   the rest shared out, so a longer library name still fits. */
+.sidebar-tab {
+    flex: 1 1 auto;
+    padding-left: 6px;
+    padding-right: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.message-year-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    border-bottom: 1px solid var(--border);
+}
+
+.message-year-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 7px 2px;
+    cursor: pointer;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+}
+
+.message-year-cell:hover {
+    background: var(--bg-tertiary);
+}
+
+.message-year-cell.expanded {
+    background: var(--bg-tertiary);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.message-year {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.message-year-cell.expanded .message-year {
+    color: var(--accent);
+}
+
+.message-year-count {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.message-year-list {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+}
+
+.message-row,
+.message-hit {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+}
+
+.message-row:hover,
+.message-hit:hover {
+    background: var(--bg-tertiary);
+}
+
+.message-row.selected {
+    background: var(--bg-tertiary);
+    box-shadow: 3px 0 0 var(--accent) inset;
+}
+
+button.message-show-all {
+    display: block;
+    width: 100%;
+    padding: 8px 14px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    font: inherit;
+    font-size: 12px;
+    color: var(--accent);
+    text-align: left;
+    cursor: pointer;
+}
+
+button.message-show-all:hover {
+    background: var(--bg-tertiary);
+}
+
+/* The keyboard's place in the list (↓ / ↑ from the box, Enter opens). */
+.message-result.cursor {
+    background: var(--bg-elevated);
+    box-shadow: 0 0 0 1px var(--border-focus) inset;
+}
+
+.message-row-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.message-row-meta,
+.message-hit-ref {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.message-hit-ref {
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.message-hit-text {
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--text-primary);
+}
+
+/* Results for what was typed before; the new ones are on their way. */
+.message-hit.stale {
+    opacity: 0.45;
+}
+
+.message-hit-text mark {
+    background: var(--accent-glow);
+    color: var(--accent-hover);
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+.message-note {
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.message-empty {
+    gap: 10px;
+}
+
+.message-empty .btn {
+    margin-top: 6px;
+}
+
+.message-import-progress {
+    min-height: 1em;
+}
+
+.message-import-error {
+    color: #f87171;
+}
+
+.message-library-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.message-library-footer[hidden] {
+    display: none;
+}
+
+.message-library-count {
+    margin-right: auto;
+}
+
+/* The reader: one paragraph per row, as prose. */
+.lyrics-grid.message-paragraphs {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 860px;
+}
+
+.message-paragraph .verse-card-text {
+    white-space: normal;
+    line-height: 1.6;
+}
+
+/* Ready for Enter (the search hit it was opened at, or moved with ↑ / ↓). */
+.verse-card.message-paragraph.highlighted:not(.active) {
+    border-color: var(--border-focus);
+    border-style: dashed;
+}
+
+.message-library-footer .btn-link {
+    font-size: 11px;
+}

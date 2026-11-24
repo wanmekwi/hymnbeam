@@ -480,23 +480,24 @@ async function navigateCollection(direction) {
 }
 
 
+// Show one sidebar panel and mark its tab; every other panel is hidden.
+function showSidebarTab(tabId, panelId) {
+    for (const panel of document.querySelectorAll('.sidebar > .sidebar-panel')) {
+        panel.classList.toggle('hidden', panel.id !== panelId);
+    }
+    for (const tab of document.querySelectorAll('.sidebar-tabs > .sidebar-tab')) {
+        tab.classList.toggle('active', tab.id === tabId);
+    }
+}
+
+
 function openLibraryTab() {
-    document.getElementById('biblePanel').classList.add('hidden');
-    document.getElementById('bibleTabBtn').classList.remove('active');
-    document.getElementById('libraryPanel').classList.remove('hidden');
-    document.getElementById('collectionsPanel').classList.add('hidden');
-    document.getElementById('libraryTabBtn').classList.add('active');
-    document.getElementById('collectionsTabBtn').classList.remove('active');
+    showSidebarTab('libraryTabBtn', 'libraryPanel');
 }
 
 
 function openCollectionsTab() {
-    document.getElementById('biblePanel').classList.add('hidden');
-    document.getElementById('bibleTabBtn').classList.remove('active');
-    document.getElementById('libraryPanel').classList.add('hidden');
-    document.getElementById('collectionsPanel').classList.remove('hidden');
-    document.getElementById('libraryTabBtn').classList.remove('active');
-    document.getElementById('collectionsTabBtn').classList.add('active');
+    showSidebarTab('collectionsTabBtn', 'collectionsPanel');
 }
 
 
@@ -512,13 +513,15 @@ async function activateCollectionsTab() {
 }
 
 
-// Sidebar tab order, left to right — drives both the direct (Ctrl+1/2/3) and
-// the cycling ([ / ]) shortcuts. openBibleTab lives in bible.js, which loads
-// after this file; it is only referenced at keypress time so that is fine.
+// Sidebar tab order, left to right — drives both the direct (Ctrl+1–4) and
+// the cycling ([ / ]) shortcuts. openBibleTab and openMessagesTab live in
+// bible.js and messages.js, which load after this file; they are only
+// referenced at keypress time so that is fine.
 const SIDEBAR_TABS = [
     { id: 'libraryTabBtn', open: () => openLibraryTab() },
     { id: 'collectionsTabBtn', open: () => activateCollectionsTab() },
     { id: 'bibleTabBtn', open: () => openBibleTab() },
+    { id: 'messagesTabBtn', open: () => openMessagesTab() },
 ];
 
 function selectSidebarTab(index) {

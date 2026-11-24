@@ -91,7 +91,9 @@ without leaving the app. On Windows, `⌘` below is `Ctrl`.
 
 | Key | Action |
 |-----|--------|
-| `→` / `←` | Next / previous verse |
+| `→` / `←` | Next / previous verse, or paragraph of a message on screen |
+| `↓` / `↑` | Move through the message in the reader |
+| `Enter` | Project the highlighted paragraph |
 | `1`–`9` | Jump to verse 1–9 |
 | `0` | Jump to verse 10 |
 | `PgDn` / `PgUp` | Next / previous item in the open collection |
@@ -122,7 +124,7 @@ without leaving the app. On Windows, `⌘` below is `Ctrl`.
 | Key | Action |
 |-----|--------|
 | `/` | Search the song library |
-| `⌃1` / `⌃2` / `⌃3` | Library / Collections / Bible tab |
+| `⌃1` / `⌃2` / `⌃3` / `⌃4` | Library / Collections / Bible / message tab |
 | `[` / `]` | Previous / next sidebar tab |
 | `?` | Show the shortcut list |
 

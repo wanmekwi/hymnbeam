@@ -106,11 +106,15 @@ async function sendToProjector() {
 //
 // It is remembered so that blank, logo and the projector opening re-send it
 // rather than the song, which would otherwise come back over it.
-function sendSlideToProjector(kind, payload, previewFrame) {
+//
+// Choosing a slide over a blank screen shows it, as it always has for Bible
+// verses; `keepBlank` is for stepping on with the arrow keys, which, as with
+// a song's verses, leaves a blank screen blank.
+function sendSlideToProjector(kind, payload, previewFrame, { keepBlank = false } = {}) {
     state.liveSlide = { kind, payload, previewFrame };
-    // Projecting over a blank screen shows the slide, as it always has. The
-    // Blank button must say so, or the next Space would seem to do nothing.
-    if (state.isBlank) {
+    // The Blank button must agree with the screen, or the next Space would
+    // seem to do nothing.
+    if (state.isBlank && !keepBlank) {
         state.isBlank = false;
         syncScreenStateButtons();
     }

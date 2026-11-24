@@ -91,6 +91,8 @@
                     <button type="button" class="sidebar-tab active" id="libraryTabBtn">Library</button>
                     <button type="button" class="sidebar-tab" id="collectionsTabBtn">Collections</button>
                     <button type="button" class="sidebar-tab" id="bibleTabBtn">Bible</button>
+                    <!-- Named by the installed message library (see messages.js) -->
+                    <button type="button" class="sidebar-tab" id="messagesTabBtn">Sermons</button>
                 </div>
 
                 <!-- Library panel -->
@@ -236,6 +238,17 @@
                     <div class="song-list" id="bibleContentList"></div>
 
                 </div>
+
+                <!-- Message library panel -->
+                <div class="sidebar-panel hidden" id="messagesPanel">
+                    <div class="bible-search-bar">
+                        <input type="search" id="messageSearchInput"
+                               placeholder="Phrase, title, date or code…" autocomplete="off"
+                               aria-label="Find a message"/>
+                    </div>
+                    <div class="song-list" id="messageContentList"></div>
+                    <div class="message-library-footer" id="messageLibraryFooter" hidden></div>
+                </div>
             </aside>
 
             <section class="content">
@@ -370,6 +383,26 @@
                         </div>
                     </div>
                     <div class="lyrics-grid" id="bibleVerseGrid"></div>
+                </div>
+
+                <div class="bible-display message-display" id="messageDisplay" hidden>
+                    <div class="song-top-row">
+                        <div class="song-meta">
+                            <h1 class="song-title" id="messageDisplayTitle"></h1>
+                            <p class="song-author" id="messageDisplaySubtitle"></p>
+                        </div>
+                        <div class="preview-area">
+                            <button type="button" class="preview-layout-toggle" id="messagePreviewToggle" aria-label="Toggle preview"></button>
+                            <div class="preview-container" id="messagePreviewContainer">
+                                <div class="preview-label">Preview</div>
+                                <div class="preview-window">
+                                    <iframe class="preview-frame" id="messagePreviewFrame"
+                                            src="projector.html" title="Projector preview"></iframe>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="lyrics-grid message-paragraphs" id="messageParagraphs"></div>
                 </div>
             </section>
         </main>
@@ -822,6 +855,8 @@ Second verse lyrics..."></textarea>
     <script src="js/collections.js"></script>
     <script src="js/settings.js"></script>
     <script src="js/bible.js"></script>
+    <script src="js/messages-find.js"></script>
+    <script src="js/messages.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

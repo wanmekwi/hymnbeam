@@ -236,8 +236,12 @@ test('the sidebar tabs can be reached from the keyboard', async () => {
     assert.equal(activeTab(), 'collectionsTabBtn');
     await app.press('3', { ctrlKey: true });
     assert.equal(activeTab(), 'bibleTabBtn');
+    await app.press('4', { ctrlKey: true });
+    assert.equal(activeTab(), 'messagesTabBtn');
     await app.press(']');
     assert.equal(activeTab(), 'libraryTabBtn', '] wraps round from the last tab');
+    await app.press('[');
+    assert.equal(activeTab(), 'messagesTabBtn');
     await app.press('[');
     assert.equal(activeTab(), 'bibleTabBtn');
     await app.press('1', { ctrlKey: true });

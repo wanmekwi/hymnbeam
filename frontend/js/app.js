@@ -256,9 +256,9 @@ function initEventListeners() {
             return;
         }
 
-        // Ctrl+1/2/3 jump straight to a sidebar tab. Deliberately a chord so it
+        // Ctrl+1–4 jump straight to a sidebar tab. Deliberately a chord so it
         // doesn't collide with the bare digits that jump between verses.
-        if (e.ctrlKey && !e.metaKey && !e.altKey && ['1', '2', '3'].includes(e.key)) {
+        if (e.ctrlKey && !e.metaKey && !e.altKey && ['1', '2', '3', '4'].includes(e.key)) {
             e.preventDefault();
             selectSidebarTab(parseInt(e.key, 10) - 1);
             return;
@@ -277,11 +277,25 @@ function initEventListeners() {
         if (getOpenModal()) return;
 
         switch (e.key) {
+            // The arrows step whatever is on screen: the next paragraph while a
+            // message paragraph is live, otherwise the song's next verse.
             case 'ArrowRight':
-                navigateVerse(1);
+                if (!stepLiveMessage(1)) navigateVerse(1);
                 break;
             case 'ArrowLeft':
-                navigateVerse(-1);
+                if (!stepLiveMessage(-1)) navigateVerse(-1);
+                break;
+            // In the message reader: move the highlight, and Enter projects it.
+            case 'ArrowDown':
+            case 'ArrowUp':
+                // A focused drop-down keeps its own arrow keys.
+                if (target.closest && target.closest('select')) break;
+                if (moveParagraphHighlight(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
+                break;
+            case 'Enter':
+                // A focused button gets Enter as a click of its own.
+                if (target.closest && target.closest('button, a, select, summary')) break;
+                if (projectHighlightedParagraph()) e.preventDefault();
                 break;
             case ' ':
                 e.preventDefault();
@@ -501,10 +515,12 @@ function syncPreviewScale() {
     // derive its slot from the frame itself. Without this it stays at the CSS
     // fallback scale(0.1) and the verse renders tiny in the pane's top-left.
     const bibleWindow = elements.biblePreviewFrame?.closest('.preview-window');
+    const messageWindow = elements.messagePreviewFrame?.closest('.preview-window');
     const panes = [
         [elements.previewWindow, elements.previewFrame],
         [elements.nextPreviewWindow, elements.nextPreviewFrame],
-        [bibleWindow, elements.biblePreviewFrame]
+        [bibleWindow, elements.biblePreviewFrame],
+        [messageWindow, elements.messagePreviewFrame]
     ];
     for (const [win, frame] of panes) {
         if (!win || !frame) continue;
@@ -534,12 +550,12 @@ function previewsEnabled() {
 function applyPreviewVisibility(hidden) {
     previewsHidden = hidden;
     elements.previewContainer.classList.toggle('collapsed', hidden);
-    if (elements.biblePreviewContainer) {
-        elements.biblePreviewContainer.classList.toggle('collapsed', hidden);
+    for (const container of [elements.biblePreviewContainer, elements.messagePreviewContainer]) {
+        if (container) container.classList.toggle('collapsed', hidden);
     }
-    // Both header buttons mirror the shared state; the icon shows the current
+    // The header buttons mirror the shared state; the icon shows the current
     // state and the tooltip names the action.
-    for (const btn of [elements.previewLayoutToggle, elements.biblePreviewToggle]) {
+    for (const btn of [elements.previewLayoutToggle, elements.biblePreviewToggle, elements.messagePreviewToggle]) {
         if (!btn) continue;
         btn.innerHTML = hidden ? SVG_EYE_OFF : SVG_EYE;
         btn.title = hidden ? 'Show preview' : 'Hide preview';
@@ -564,14 +580,15 @@ function initPreviewLayout() {
     try { hidden = localStorage.getItem(PREVIEW_HIDDEN_KEY) === '1'; } catch (e) { /* default */ }
     applyPreviewVisibility(hidden);
     elements.previewLayoutToggle.addEventListener('click', togglePreviewVisibility);
-    if (elements.biblePreviewToggle) {
-        elements.biblePreviewToggle.addEventListener('click', togglePreviewVisibility);
+    for (const btn of [elements.biblePreviewToggle, elements.messagePreviewToggle]) {
+        if (btn) btn.addEventListener('click', togglePreviewVisibility);
     }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
     initEventListeners();
     initBibleListeners();
+    initMessageListeners();
     initSettingsDialog();
     initMenuEvents();
     initPreviewLayout();
@@ -583,8 +600,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (elements.previewWindow) ro.observe(elements.previewWindow);
         // The Bible pane is display:none until its tab opens, so its window has
         // zero width at startup; observing it re-scales the moment it appears.
-        const bibleWindow = elements.biblePreviewFrame?.closest('.preview-window');
-        if (bibleWindow) ro.observe(bibleWindow);
+        // Likewise the message reader's pane.
+        for (const frame of [elements.biblePreviewFrame, elements.messagePreviewFrame]) {
+            const win = frame?.closest('.preview-window');
+            if (win) ro.observe(win);
+        }
     }
 
     const ready = await waitForBackend();
@@ -597,6 +617,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     openLibraryTab();
     fetchSongs();
     fetchCollections();
+    loadMessageStatus();      // names the message library tab
 
     // Look for a new version shortly after launch, once the UI has settled.
     // Quiet unless one exists; nothing is downloaded until the user says so.

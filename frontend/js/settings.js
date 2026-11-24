@@ -125,7 +125,8 @@ function scheduleSaveSettings() {
 function pushSettingsToPreview() {
     if (!state.settings || !previewsEnabled()) return;
     const msg = { type: 'apply-settings', settings: state.settings };
-    for (const frame of [elements.previewFrame, elements.nextPreviewFrame, elements.biblePreviewFrame]) {
+    for (const frame of [elements.previewFrame, elements.nextPreviewFrame, elements.biblePreviewFrame,
+                         elements.messagePreviewFrame]) {
         if (frame && frame.contentWindow) frame.contentWindow.postMessage(msg, '*');
     }
 }

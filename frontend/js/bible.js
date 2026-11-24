@@ -188,12 +188,7 @@ function sendBiblePayload(payload) {
 }
 
 async function openBibleTab() {
-    document.getElementById('libraryPanel').classList.add('hidden');
-    document.getElementById('collectionsPanel').classList.add('hidden');
-    document.getElementById('biblePanel').classList.remove('hidden');
-    document.getElementById('libraryTabBtn').classList.remove('active');
-    document.getElementById('collectionsTabBtn').classList.remove('active');
-    document.getElementById('bibleTabBtn').classList.add('active');
+    showSidebarTab('bibleTabBtn', 'biblePanel');
     if (bibleState.books.length === 0) {
         try {
             await fetchBibleBooks();
