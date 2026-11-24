@@ -37,6 +37,10 @@ const state = {
     openCollection: null,   // currently open collection (full with songs)
     collectionPosition: -1, // index of active song in open collection
     settings: null,         // display settings (typography + background)
+    // On screen in place of the song's verse: a Bible verse or a message
+    // paragraph, as {kind, payload, previewFrame}. Null while the song is live.
+    // See sendSlideToProjector in live.js.
+    liveSlide: null,
 };
 
 const DEFAULT_SETTINGS = {

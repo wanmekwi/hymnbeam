@@ -401,20 +401,7 @@ async function projectCollectionBible(reference) {
             hasPrev: false,
             hasNext: false
         };
-        const msg = { type: 'update-lyrics', ...payload };
-        if (previewsEnabled() && elements.previewFrame?.contentWindow) {
-            elements.previewFrame.contentWindow.postMessage(msg, '*');
-            clearNextPreview();
-        }
-        if (window.__TAURI__) {
-            if (state.projectorOpen) {
-                window.__TAURI__.core.invoke('send_to_projector', {
-                    event: 'update-lyrics', payload: JSON.stringify(payload)
-                }).catch(e => console.error('bible project error:', e));
-            }
-        } else if (window.projectorWindow) {
-            window.projectorWindow.postMessage(msg, '*');
-        }
+        sendSlideToProjector('bible', payload, elements.previewFrame);
     } catch (e) {
         console.error('projectCollectionBible:', e);
         updateStatus('Could not project passage');

@@ -83,3 +83,15 @@ test('arrow keys still move within the song an entry loaded', async () => {
     assert.equal(app.onScreen().label, 'Verse 2');
     assert.equal(app.state('collectionPosition'), 0);
 });
+
+test('blanking a reading in the service and unblanking brings back the reading', async () => {
+    await openService();
+    await next();
+    await next();
+    assert.equal(app.onScreen().title, 'John 3:16');
+    await app.press(' ');
+    assert.equal(app.onScreen().isBlank, true);
+    await app.press(' ');
+    assert.equal(app.onScreen().isBlank, false);
+    assert.equal(app.onScreen().title, 'John 3:16', 'not the song before it');
+});

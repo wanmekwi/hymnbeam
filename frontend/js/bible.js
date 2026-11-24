@@ -184,17 +184,7 @@ function buildBibleVersesArray() {
 }
 
 function sendBiblePayload(payload) {
-    const frame = document.getElementById('biblePreviewFrame');
-    const previewOn = typeof previewsEnabled !== 'function' || previewsEnabled();
-    if (previewOn && frame && frame.contentWindow) {
-        frame.contentWindow.postMessage({ type: 'update-lyrics', ...payload }, '*');
-    }
-    if (state.projectorOpen && window.__TAURI__) {
-        window.__TAURI__.core.invoke('send_to_projector', {
-            event: 'update-lyrics',
-            payload: JSON.stringify(payload),
-        }).catch(e => console.error('bible project error:', e));
-    }
+    sendSlideToProjector('bible', payload, document.getElementById('biblePreviewFrame'));
 }
 
 async function openBibleTab() {
