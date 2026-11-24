@@ -38,7 +38,8 @@ const messageState = {
     cursor: -1,           // the keyboard's place in the list; -1 for none
     message: null,        // open in the reader: {work, paragraphs}
     highlighted: null,    // the reader's paragraph ready for Enter, as an index
-    live: null,           // the paragraph on screen: {work, paragraphs, index}
+    hitTarget: null,      // {paragraphId, snippet} of the search result the reader was opened at
+    live: null,           // the message on screen: see showMessagePlace
     busy: false,          // the import picker or a copy is running
     importPercent: null,
     importError: null,
@@ -75,7 +76,10 @@ async function loadMessageStatus() {
 }
 
 function applyMessageTabLabel() {
-    messageEl('messagesTabBtn').textContent = messageState.status?.tab_label || MESSAGE_TAB_FALLBACK;
+    const label = messageState.status?.tab_label || MESSAGE_TAB_FALLBACK;
+    messageEl('messagesTabBtn').textContent = label;
+    // The Display settings target for the same thing goes by the same name.
+    elements.setDisplayTargetMessage.textContent = label;
 }
 
 async function ensureMessageCatalogue() {
@@ -478,7 +482,10 @@ function moveMessageCursor(direction) {
 async function openMessageResult(el) {
     if (!el) return false;
     const paragraphId = el.dataset.paragraphId != null ? Number(el.dataset.paragraphId) : null;
-    return openMessage(el.dataset.code, { paragraphId });
+    // A phrase result opens at its paragraph, and projecting it starts at the
+    // page with the matched words.
+    const hit = paragraphId == null ? null : (messageState.hits || []).find(h => h.paragraph_id === paragraphId);
+    return openMessage(el.dataset.code, { paragraphId, snippet: hit?.snippet ?? null });
 }
 
 // ---- Recent ---------------------------------------------------------------
@@ -502,7 +509,7 @@ function rememberRecentMessage(code) {
 
 // Show a message in the reader, at its first paragraph or at `paragraphId`.
 // Nothing is projected until a paragraph is chosen.
-async function openMessage(code, { paragraphId = null } = {}) {
+async function openMessage(code, { paragraphId = null, snippet = null } = {}) {
     const seq = ++messageState.openSeq;
     let message;
     try {
@@ -519,6 +526,7 @@ async function openMessage(code, { paragraphId = null } = {}) {
     const at = paragraphs.findIndex(p => p.id === paragraphId);
     messageState.message = { work, paragraphs };
     messageState.highlighted = paragraphs.length ? Math.max(0, at) : null;
+    messageState.hitTarget = at >= 0 && snippet ? { paragraphId, snippet } : null;
     if (work.kind !== 'book' && work.year != null) messageState.openYear = work.year;
     // Recent and the open year show the next time the browse list is drawn,
     // rather than moving rows under the operator's pointer now.
@@ -549,14 +557,14 @@ function renderMessageReader() {
     markMessageParagraphs();
 }
 
-// `active` is the paragraph on screen, `highlighted` the one Enter projects.
+// `active` marks the paragraphs on screen, `highlighted` the one Enter projects.
 function markMessageParagraphs() {
     const m = messageState.message;
     if (!m) return;
-    const live = messageState.live?.work.code === m.work.code ? messageState.live.index : null;
+    const live = messageState.live?.work.code === m.work.code ? messageState.live : null;
     for (const card of messageEl('messageParagraphs').querySelectorAll('.message-paragraph')) {
         const i = Number(card.dataset.index);
-        card.classList.toggle('active', i === live);
+        card.classList.toggle('active', !!live && i >= live.screen.first && i <= live.screen.last);
         card.classList.toggle('highlighted', i === messageState.highlighted);
     }
 }
@@ -567,33 +575,267 @@ function scrollMessageParagraph(index, block = 'nearest') {
         ?.scrollIntoView({ block });
 }
 
-// What the projector is sent for a paragraph. For now it is shown as scripture
-// is: one paragraph, the title at the top and no paragraph number.
-function messageSlidePayload(work, paragraph) {
+// ---- On the projector -------------------------------------------------------
+//
+// A message is shown as one column of text that scrolls (see
+// message-scroll.js). Choosing a paragraph puts it at the top of the screen;
+// from there the operator moves the text on or back by lines, into the
+// paragraphs after it and before it, with the keys, the mouse wheel over the
+// preview, or a click on the line in the reader.
+
+const MESSAGE_STEP_LINES = 3;            // → and ← move the text this many lines
+const MESSAGE_WHEEL_PX_PER_LINE = 40;    // wheel or trackpad travel for one line
+
+// The projector's footer: the message's title and code, or for the book, the
+// chapter's title and the book's name.
+function messageFooter(work) {
+    const parts = work.kind === 'book' ? [work.title, messageBookName(work)] : [work.title, work.code];
+    return parts.filter(Boolean).join(' · ');
+}
+
+function messageMeasureCopy() {
+    try {
+        return elements.messageMeasureFrame?.contentWindow?.messageMeasure || null;
+    } catch (e) {
+        console.error('message lines: the measuring copy cannot be reached', e);
+        return null;
+    }
+}
+
+// The layout of the message on screen (see message-scroll.js), measured in
+// the hidden copy of the projector page at the projector's size. Lines are
+// worked out a paragraph at a time as they are needed, and kept until the
+// settings, the size or the message change. Until the copy has loaded, lines
+// are guessed at by length.
+let messageLayoutCache = null;   // {key, layout}
+
+function messageLayout(work, paragraphs) {
+    const measure = messageMeasureCopy();
+    const frame = elements.messageMeasureFrame;
+    const key = [work.code, !!measure, JSON.stringify(state.settings), frame?.style.width, frame?.style.height].join('|');
+    if (messageLayoutCache?.key === key) return messageLayoutCache.layout;
+    let layout = null;
+    if (measure && state.settings) {
+        try {
+            const footer = messageFooter(work);
+            measure.prepare(state.settings, footer);
+            const metrics = measure.metrics();
+            if (metrics && metrics.pitch > 0 && metrics.view > 0) {
+                const lines = new Map();
+                layout = {
+                    count: paragraphs.length,
+                    pitch: metrics.pitch, gap: metrics.gap || 0, view: metrics.view,
+                    starts(i) {
+                        if (!lines.has(i)) {
+                            measure.prepare(state.settings, footer);
+                            const starts = Array.from(measure.lines(paragraphs[i]?.text ?? '') || []);
+                            lines.set(i, starts.length ? starts : [0]);
+                        }
+                        return lines.get(i);
+                    },
+                };
+            }
+        } catch (e) {
+            console.error('message lines:', e);
+            layout = null;
+        }
+    }
+    if (!layout) {
+        const lines = new Map();
+        layout = {
+            count: paragraphs.length, pitch: 1, gap: 0, view: 12,
+            starts(i) {
+                if (!lines.has(i)) lines.set(i, messageEstimatedStarts(paragraphs[i]?.text ?? ''));
+                return lines.get(i);
+            },
+        };
+    }
+    messageLayoutCache = { key, layout };
+    return layout;
+}
+
+// What the projector is sent: the paragraphs from `win.first` to `win.last`
+// and the place to show at the top of the screen. `jump` asks it to fade to
+// the place as to a new slide, rather than glide there.
+function messageSlidePayload(work, paragraphs, win, anchor, jump) {
     return {
-        text: paragraph.text,
+        mode: 'message',
+        scroll: {
+            first: win.first,
+            paragraphs: paragraphs.slice(win.first, win.last + 1).map(p => p.text),
+            anchor,
+            jump,
+        },
+        footer: messageFooter(work),
         label: '',
         isBlank: false,
-        isBible: true,
+        isBible: false,
         title: work.title,
         author: null,
         musical_key: null,
         songId: `message-${work.code}`,
         songNumber: null,
-        verses: [],
         hasPrev: false,
         hasNext: false,
     };
 }
 
-function projectMessageParagraph(work, paragraphs, index, options) {
-    const paragraph = paragraphs[index];
-    if (!paragraph) return;
-    messageState.live = { work, paragraphs, index };
-    if (messageState.message?.work.code === work.code) messageState.highlighted = index;
-    sendSlideToProjector('message', messageSlidePayload(work, paragraph), elements.messagePreviewFrame, options);
+// Show the message with `place` ({paragraph, line}) at the top of the screen,
+// or as near as the end of the message allows. The reader's highlight follows
+// the paragraph at the top (or goes to `highlight`), unless `followReader` is
+// false.
+//
+// messageState.live: {work, paragraphs, place, offset (where its line starts),
+// shown (lines on screen), window (paragraphs sent), screen ({first, last}
+// paragraphs on screen)}.
+function showMessagePlace(work, paragraphs, place,
+    { jump = false, keepBlank = false, followReader = true, highlight = null } = {}) {
+    if (!paragraphs.length) return;
+    const layout = messageLayout(work, paragraphs);
+    const top = messageClampTop(layout, place);
+    const shown = messageLinesShown(layout, top);
+    const prev = messageState.live;
+    const win = !jump && prev?.work.code === work.code && messageWindowCovers(prev.window, layout, top, shown)
+        ? prev.window : messageWindowFor(layout, top, shown);
+    const anchor = { paragraph: top.paragraph, offset: messageOffsetOf(layout, top) };
+    messageState.live = {
+        work, paragraphs, place: top, offset: anchor.offset, shown, window: win,
+        screen: { first: top.paragraph, last: messageMoveLines(layout, top, shown - 1).paragraph },
+    };
+    const inReader = followReader && messageState.message?.work.code === work.code;
+    if (inReader) messageState.highlighted = highlight ?? top.paragraph;
+    sendSlideToProjector('message', messageSlidePayload(work, paragraphs, win, anchor, jump),
+        elements.messagePreviewFrame, { keepBlank });
     markMessageParagraphs();
-    if (messageState.message?.work.code === work.code) scrollMessageParagraph(index);
+    if (inReader) scrollMessageParagraph(messageState.highlighted);
+}
+
+// Project from the reader: from `offset` in the paragraph (where it was
+// clicked), or else from its start, or, for the paragraph a search result
+// opened, from the line with the matched words.
+function projectFromReader(index, offset = null) {
+    const { work, paragraphs } = messageState.message;
+    const target = messageState.hitTarget;
+    let at = offset;
+    if (at == null && target && paragraphs[index]?.id === target.paragraphId) {
+        at = messageHitOffset(paragraphs[index].text, target.snippet);
+    }
+    const layout = messageLayout(work, paragraphs);
+    showMessagePlace(work, paragraphs, messagePlaceAt(layout, index, at ?? 0), { jump: true, highlight: index });
+}
+
+// Move the message on screen `n` lines on (or back), even if the reader has
+// since moved on to another message. Like a song's verses, moving leaves a
+// blanked screen blank. False when no message is on screen.
+function moveLiveMessage(n) {
+    const live = messageState.live;
+    if (state.liveSlide?.kind !== 'message' || !live) return false;
+    const layout = messageLayout(live.work, live.paragraphs);
+    // From where its line starts, since the lines may have broken afresh.
+    const from = messagePlaceAt(layout, live.place.paragraph, live.offset);
+    const to = messageClampTop(layout, messageMoveLines(layout, from, n));
+    if (compareMessagePlaces(to, live.place) !== 0) {
+        showMessagePlace(live.work, live.paragraphs, to, { keepBlank: true });
+    }
+    return true;
+}
+
+// → / ←: a few lines on or back, or with Shift a screen less a line, so that
+// nothing is passed over unseen.
+function stepLiveMessage(direction, { screen = false } = {}) {
+    const live = messageState.live;
+    if (state.liveSlide?.kind !== 'message' || !live) return false;
+    const most = Math.max(1, live.shown - 1);
+    return moveLiveMessage(direction * (screen ? most : Math.min(MESSAGE_STEP_LINES, most)));
+}
+
+// The mouse wheel or trackpad over the preview moves the text a line for
+// every MESSAGE_WHEEL_PX_PER_LINE of travel, sent at most once a frame and,
+// like Shift and an arrow, at most a screen less a line at a time.
+let messageWheelTravel = 0;
+let messageWheelLines = 0;
+let messageWheelFrame = null;
+function onMessageWheel(e) {
+    if (state.liveSlide?.kind !== 'message' || !messageState.live) return;
+    e.preventDefault();
+    const scale = e.deltaMode === 1 ? MESSAGE_WHEEL_PX_PER_LINE
+        : e.deltaMode === 2 ? MESSAGE_WHEEL_PX_PER_LINE * Math.max(1, messageState.live.shown - 1) : 1;
+    // A change of direction starts afresh rather than first undoing what was left over.
+    if (Math.sign(e.deltaY) !== Math.sign(messageWheelTravel)) messageWheelTravel = 0;
+    messageWheelTravel += e.deltaY * scale;
+    const lines = Math.trunc(messageWheelTravel / MESSAGE_WHEEL_PX_PER_LINE);
+    if (!lines) return;
+    messageWheelTravel -= lines * MESSAGE_WHEEL_PX_PER_LINE;
+    messageWheelLines += lines;
+    if (messageWheelFrame == null) {
+        messageWheelFrame = requestAnimationFrame(() => {
+            messageWheelFrame = null;
+            const most = Math.max(1, (messageState.live?.shown ?? 1) - 1);
+            const n = Math.max(-most, Math.min(most, messageWheelLines));
+            messageWheelLines = 0;
+            moveLiveMessage(n);
+        });
+    }
+}
+
+// Where in a paragraph's text a click in the reader landed, or null if not
+// on its text (or the webview cannot say).
+function messageClickOffset(e, card) {
+    const textEl = card.querySelector('.verse-card-text');
+    if (!textEl || !textEl.contains(e.target)) return null;
+    let node = null;
+    let offset = 0;
+    if (document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+        if (range) { node = range.startContainer; offset = range.startOffset; }
+    } else if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+        if (pos) { node = pos.offsetNode; offset = pos.offset; }
+    }
+    if (!node || node.nodeType !== Node.TEXT_NODE || !textEl.contains(node)) return null;
+    let at = 0;
+    const walker = document.createTreeWalker(textEl, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (n === node) return at + offset;
+        at += n.length;
+    }
+    return null;
+}
+
+// Lines are measured at the projector's size: it goes fullscreen on whatever
+// screen it is given, and a 4:3 screen fits less on a line than the previews'
+// 1920×1080, which is used until the projector has said.
+function setMessageMeasureSize(size) {
+    const data = typeof size === 'string' ? JSON.parse(size) : size;
+    const width = Math.round(Number(data?.width));
+    const height = Math.round(Number(data?.height));
+    if (!(width >= 320 && height >= 240)) return;
+    const frame = elements.messageMeasureFrame;
+    if (frame.style.width === `${width}px` && frame.style.height === `${height}px`) return;
+    frame.style.width = `${width}px`;
+    frame.style.height = `${height}px`;
+    messageLayoutCache = null;
+    messageDisplayChanged();
+}
+
+// The display settings or the projector's size changed, or the measuring copy
+// loaded a font: lines may break differently. The message on screen is sent
+// again from the line holding the text that was at the top of the screen; the
+// reader's highlight stays where the operator left it.
+let messageRefreshTimer = null;
+function messageDisplayChanged() {
+    clearTimeout(messageRefreshTimer);
+    messageRefreshTimer = setTimeout(refreshLiveMessage, 150);
+}
+
+function refreshLiveMessage() {
+    messageRefreshTimer = null;
+    messageLayoutCache = null;
+    const live = messageState.live;
+    if (!live || state.liveSlide?.kind !== 'message') return;
+    const layout = messageLayout(live.work, live.paragraphs);
+    showMessagePlace(live.work, live.paragraphs, messagePlaceAt(layout, live.place.paragraph, live.offset),
+        { keepBlank: true, followReader: false });
 }
 
 function messageReaderShown() {
@@ -603,8 +845,7 @@ function messageReaderShown() {
 // Enter: project the reader's highlighted paragraph.
 function projectHighlightedParagraph() {
     if (!messageReaderShown() || messageState.highlighted == null) return false;
-    const { work, paragraphs } = messageState.message;
-    projectMessageParagraph(work, paragraphs, messageState.highlighted);
+    projectFromReader(messageState.highlighted);
     return true;
 }
 
@@ -615,19 +856,6 @@ function moveParagraphHighlight(direction) {
     messageState.highlighted = Math.max(0, Math.min(last, messageState.highlighted + direction));
     markMessageParagraphs();
     scrollMessageParagraph(messageState.highlighted);
-    return true;
-}
-
-// ← / → while a paragraph is on screen: the next or previous paragraph of that
-// message, even if the reader has since moved on to another one. Like a
-// song's verses, stepping leaves a blanked screen blank. False when no
-// paragraph is live, so the keys go on stepping the song.
-function stepLiveMessage(direction) {
-    if (state.liveSlide?.kind !== 'message' || !messageState.live) return false;
-    const { work, paragraphs, index } = messageState.live;
-    if (paragraphs[index + direction]) {
-        projectMessageParagraph(work, paragraphs, index + direction, { keepBlank: true });
-    }
     return true;
 }
 
@@ -690,10 +918,17 @@ function initMessageListeners() {
         else if (e.target.closest('#messageRemoveBtn')) confirmRemoveMessageLibrary();
     });
 
+    // A click projects from the line clicked.
     messageEl('messageParagraphs').addEventListener('click', (e) => {
         const card = e.target.closest('.message-paragraph');
-        const m = messageState.message;
-        if (!card || !m) return;
-        projectMessageParagraph(m.work, m.paragraphs, Number(card.dataset.index));
+        if (!card || !messageState.message) return;
+        projectFromReader(Number(card.dataset.index), messageClickOffset(e, card));
+    });
+
+    messageEl('messagePreviewSurface').addEventListener('wheel', onMessageWheel, { passive: false });
+
+    // The measuring copy of the projector page has loaded, or loaded a font.
+    window.addEventListener('message', (e) => {
+        if (e.data && e.data.type === 'message-measure-changed') messageDisplayChanged();
     });
 }

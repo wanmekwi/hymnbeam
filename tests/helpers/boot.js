@@ -236,7 +236,8 @@ function makeBackend(options) {
 // A stand-in for the phrase search: paragraphs holding the words typed as a
 // phrase first, then those holding all of them; the year and kind filters as
 // the real search applies them; the first word marked in the snippet with the
-// same private-use characters.
+// same private-use characters. Like the real snippet, a long paragraph's is
+// cut to 16 words around the match, with '…' where words were left out.
 function searchMessages(library, params) {
     const q = (params.get('q') || '').toLowerCase().trim();
     const words = q.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
@@ -256,8 +257,13 @@ function searchMessages(library, params) {
                 : words.every(w => text.includes(w)) ? 'words' : null;
             if (!group) continue;
             const at = text.indexOf(words[0]);
-            const snippet = p.text.slice(0, at) + '\uE000' + p.text.slice(at, at + words[0].length) +
+            const marked = p.text.slice(0, at) + '\uE000' + p.text.slice(at, at + words[0].length) +
                 '\uE001' + p.text.slice(at + words[0].length);
+            const tokens = marked.split(' ');
+            const hitWord = tokens.findIndex(t => t.includes('\uE000'));
+            const first = Math.max(0, Math.min(hitWord - 4, tokens.length - 16));
+            const snippet = (first > 0 ? '…' : '') + tokens.slice(first, first + 16).join(' ') +
+                (first + 16 < tokens.length ? '…' : '');
             groups[group].push({
                 group, paragraph_id: p.id, code: work.code, number: p.number, title: work.title,
                 kind: work.kind, chapter: work.chapter ?? null, location: work.location ?? null,
@@ -273,6 +279,7 @@ function searchMessages(library, params) {
 // like), given the arguments and the backend state.
 function makeTauri({ version = '0.5.1', updater = null, commands = {} } = {}, db) {
     const invokes = [];
+    const emitted = [];
     const listeners = new Map();
     const relaunches = [];
     const closed = [];
@@ -294,6 +301,10 @@ function makeTauri({ version = '0.5.1', updater = null, commands = {} } = {}, db
                 listeners.set(name, fn);
                 return () => listeners.delete(name);
             },
+            // A webview → app event, as the projector window sends its size.
+            async emit(name, payload) {
+                emitted.push({ name, payload: JSON.parse(JSON.stringify(payload ?? null)) });
+            },
         },
         window: { getCurrent: () => ({ close() { closed.push(Date.now()); } }) },
         process: { async relaunch() { relaunches.push(Date.now()); } },
@@ -301,7 +312,7 @@ function makeTauri({ version = '0.5.1', updater = null, commands = {} } = {}, db
     if (updater) tauri.updater = updater;
 
     return {
-        tauri, invokes, relaunches, closed,
+        tauri, invokes, relaunches, closed, emitted,
         // Fire a backend → webview event, e.g. a menu item or 'projector-closed'.
         emit(name, payload) {
             const fn = listeners.get(name);
@@ -423,6 +434,9 @@ function openPage(page, backend, bridge, { tauri = true } = {}) {
  * @param {Array}  [options.collections]  full collections ({id, name, songs:[entries]})
  * @param {object} [options.bible]        {books: [...], chapters: {'GEN/1': [{verse, text}]}}
  * @param {object} [options.messages]     installed message library: {status, works, paragraphs}
+ * @param {object} [options.messageMeasure] {metrics(settings), lines(text, settings)}: stands in for
+ *                                        the measuring copy of the projector page, which jsdom cannot
+ *                                        lay out (without it, the app guesses lines by length)
  * @param {object} [options.updater]      stand-in for window.__TAURI__.updater
  * @param {object} [options.latestRelease] body returned by the GitHub releases API (null = offline)
  * @param {string} [options.version]      what get_app_version reports
@@ -439,6 +453,18 @@ async function bootApp(options = {}) {
     const bridge = makeTauri(options, backend.db);
     const page = openPage('index.html', backend, bridge);
     const { window, until, settle, sleep } = page;
+    const measured = [];
+    if (options.messageMeasure) {
+        let prepared = null;
+        window.document.getElementById('messageMeasureFrame').contentWindow.messageMeasure = {
+            prepare(settings, footer) {
+                prepared = JSON.parse(JSON.stringify(settings));
+                measured.push({ footer, fontPct: settings.message.fontPct });
+            },
+            metrics: () => options.messageMeasure.metrics(prepared),
+            lines: (text) => options.messageMeasure.lines(text, prepared),
+        };
+    }
 
     // Start-up is finished once the song list request has been answered.
     // (`started: false` skips the wait, for tests about start-up going wrong.)
@@ -457,6 +483,8 @@ async function bootApp(options = {}) {
         unhandledRequests: backend.db.unhandled,
         invokes: bridge.invokes,
         relaunches: bridge.relaunches,
+        /** What the measuring copy was prepared for: [{footer, fontPct}], oldest first. */
+        measured,
         emit: bridge.emit,
         toast: () => window.document.getElementById('toast').textContent,
 
@@ -519,6 +547,8 @@ async function bootProjector(options = {}) {
         ...page,
         backend: backend.db,
         closed: bridge.closed,
+        /** Events the page sent to the app, e.g. its size: [{name, payload}]. */
+        emitted: bridge.emitted,
         /** Deliver an event the way the Rust side does: a JSON string payload. */
         async send(event, payload = {}) {
             await bridge.emit(event, JSON.stringify(payload));

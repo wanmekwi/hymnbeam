@@ -31,6 +31,8 @@ function initMenuEvents() {
         openAboutModal();
         checkForUpdates();
     });
+    // The projector window's size, when it opens and when it changes.
+    on('projector-size', (event) => setMessageMeasureSize(event.payload));
     on('projector-closed', () => {
         state.projectorOpen = false;
         // The alert died with the projector window — reset the operator's
@@ -277,13 +279,14 @@ function initEventListeners() {
         if (getOpenModal()) return;
 
         switch (e.key) {
-            // The arrows step whatever is on screen: the next paragraph while a
-            // message paragraph is live, otherwise the song's next verse.
+            // The arrows step whatever is on screen: a message on screen moves on
+            // or back a few lines (with Shift, a screen), otherwise the song
+            // steps to its next or previous verse.
             case 'ArrowRight':
-                if (!stepLiveMessage(1)) navigateVerse(1);
+                if (!stepLiveMessage(1, { screen: e.shiftKey })) navigateVerse(1);
                 break;
             case 'ArrowLeft':
-                if (!stepLiveMessage(-1)) navigateVerse(-1);
+                if (!stepLiveMessage(-1, { screen: e.shiftKey })) navigateVerse(-1);
                 break;
             // In the message reader: move the highlight, and Enter projects it.
             case 'ArrowDown':

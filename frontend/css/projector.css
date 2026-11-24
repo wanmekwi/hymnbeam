@@ -45,7 +45,8 @@ body {
     display: none;
 }
 
-.projector.bible-mode .lyrics-text {
+.projector.bible-mode .lyrics-text,
+.projector.message-mode .lyrics-text {
     white-space: normal;
     word-break: break-word;
     width: 82vw;
@@ -394,4 +395,89 @@ body {
 .projector.transition-fade .lyrics-text.entering,
 .projector.transition-cut .lyrics-text.entering {
     animation: none;
+}
+
+/* A message: prose like scripture, with no title bar, in one column that
+ * scrolls. Its footer (the title and code) sits in the meta bar's place, which
+ * is always laid out in this mode and takes its own room at the foot of the
+ * screen, rather than lying over it, so the text has the space above it to
+ * itself even when a long title wraps onto a second line. */
+.projector.message-mode .song-title-bar {
+    display: none;
+}
+
+.meta-col-message {
+    display: none;
+}
+
+.projector.message-mode .song-meta-bar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: baseline;
+    column-gap: 24px;
+    position: relative;
+    align-self: stretch;
+    flex-shrink: 0;
+    margin: 0 calc(-1 * var(--safe-area)) calc(-1 * var(--safe-area));
+}
+
+.projector.message-mode .meta-col-nav,
+.projector.message-mode .meta-col-author {
+    display: none;
+}
+
+.projector.message-mode .meta-col-message {
+    display: contents;
+}
+
+.message-footer-text {
+    grid-column: 2;
+    text-align: center;
+    font-weight: 600;
+    min-width: 0;
+}
+
+/* The text is shown in the space between the top of the screen and the
+ * footer, from the line at the top of the screen down. Lines above it are
+ * hidden, and so is any line that would not fit whole at the foot: the
+ * projector sets --message-cut to the space left under the last whole line. */
+.projector.message-mode .lyrics-container {
+    align-self: stretch;
+    align-items: flex-start;
+    overflow: hidden;
+    min-height: 0;
+    margin-top: clamp(16px, 5vh, 72px);
+    margin-bottom: 24px;
+    -webkit-clip-path: inset(0 0 var(--message-cut, 0px) 0);
+    clip-path: inset(0 0 var(--message-cut, 0px) 0);
+}
+
+.projector.message-mode .lyrics-stack {
+    align-self: flex-start;
+}
+
+.message-column {
+    transition: transform 320ms cubic-bezier(0.25, 0.8, 0.3, 1);
+}
+
+.message-para {
+    margin: 0;
+}
+
+.message-para + .message-para {
+    margin-top: 0.5em;
+}
+
+/* "Show the title" off hides the words but keeps their space, so turning it
+ * on or off does not change how many lines fit. */
+.projector.message-mode.layout-hide-title .message-footer-text {
+    visibility: hidden;
+}
+
+/* Notes in the text, such as [The listeners say amen.], shown as written
+ * but quieter than the words spoken. */
+.projector.message-mode .lyrics-text .message-note {
+    font-style: italic;
+    font-weight: inherit;
+    opacity: 0.6;
 }

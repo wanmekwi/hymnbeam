@@ -398,6 +398,10 @@
                                 <div class="preview-window">
                                     <iframe class="preview-frame" id="messagePreviewFrame"
                                             src="projector.html" title="Projector preview"></iframe>
+                                    <!-- Takes the mouse wheel, which would otherwise go to the
+                                         preview's own page, to scroll the message on screen. -->
+                                    <div class="preview-scroll-surface" id="messagePreviewSurface"
+                                         title="Scroll to move the text on screen"></div>
                                 </div>
                             </div>
                         </div>
@@ -645,6 +649,7 @@ Second verse lyrics..."></textarea>
                         <div class="segmented" id="setDisplayTarget">
                             <button type="button" data-value="song" class="active">Songs</button>
                             <button type="button" data-value="bible">Bible</button>
+                            <button type="button" data-value="message" id="setDisplayTargetMessage">Sermons</button>
                         </div>
                         <div class="bible-target-options hidden" id="bibleTargetOptions">
                             <label class="toggle-inline" for="setBibleSameAsSongs">
@@ -652,6 +657,13 @@ Second verse lyrics..."></textarea>
                                 <span>Use same display as songs</span>
                             </label>
                             <button type="button" class="btn btn-secondary btn-small hidden" id="bibleMatchSongBtn">Match song settings</button>
+                        </div>
+                        <div class="bible-target-options hidden" id="messageTargetOptions">
+                            <label class="toggle-inline" for="setMessageSameAsBible">
+                                <input type="checkbox" id="setMessageSameAsBible" class="toggle" checked>
+                                <span>Use same display as Bible</span>
+                            </label>
+                            <button type="button" class="btn btn-secondary btn-small hidden" id="messageMatchBibleBtn">Match Bible settings</button>
                         </div>
                     </div>
                     <div class="settings-panel active" data-panel="typography">
@@ -743,23 +755,28 @@ Second verse lyrics..."></textarea>
                     </div>
 
                     <div class="settings-panel" data-panel="layout">
-                        <div class="form-group toggle-group">
-                            <label for="setShowTitleBar">Show song title bar</label>
-                            <input type="checkbox" id="setShowTitleBar" class="toggle" checked>
+                        <div class="form-group message-own-setting hidden" id="messageFontGroup">
+                            <label for="setMessageFont">Text size: <span class="value-readout" id="setMessageFontValue">4.5%</span></label>
+                            <input type="range" id="setMessageFont" min="2.5" max="8" step="0.25" value="4.5">
+                            <span class="form-hint">Of the screen's height. The text scrolls up the screen as one column: → and ← move it three lines (with Shift, a screen), and so does the mouse wheel over the preview.</span>
                         </div>
                         <div class="form-group toggle-group">
+                            <label for="setShowTitleBar" id="setShowTitleBarLabel">Show song title bar</label>
+                            <input type="checkbox" id="setShowTitleBar" class="toggle" checked>
+                        </div>
+                        <div class="form-group toggle-group song-layout-setting">
                             <label for="setShowMetaBar">Show meta bar (#, key, author)</label>
                             <input type="checkbox" id="setShowMetaBar" class="toggle" checked>
                         </div>
-                        <div class="form-group toggle-group">
+                        <div class="form-group toggle-group song-layout-setting">
                             <label for="setShowVerseLabel">Show verse label (Verse 1, Chorus…)</label>
                             <input type="checkbox" id="setShowVerseLabel" class="toggle">
                         </div>
-                        <div class="form-group toggle-group">
+                        <div class="form-group toggle-group song-layout-setting">
                             <label for="setAutoBreakLines">Auto-break long lines</label>
                             <input type="checkbox" id="setAutoBreakLines" class="toggle" checked>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group song-layout-setting">
                             <span class="form-hint">Splits overly long lines at punctuation or phrase boundaries when that lets the whole verse display larger.</span>
                         </div>
                         <div class="form-group">
@@ -844,7 +861,15 @@ Second verse lyrics..."></textarea>
     </div>
 
     <!-- Plain scripts sharing one global scope. Order matters only for code
-         that runs at load time: core.js first, app.js (which boots) last. -->
+         that runs at load time: message-scroll.js (whose sizes core.js reads)
+         and core.js first, app.js (which boots) last. -->
+    <!-- A hidden copy of the projector page that a message's lines are
+         measured in (see message-scroll.js). Laid out but never seen, so it
+         measures even while every preview is hidden. -->
+    <iframe class="measure-frame" id="messageMeasureFrame" src="projector.html?measure"
+            tabindex="-1" aria-hidden="true" title=""></iframe>
+
+    <script src="js/message-scroll.js"></script>
     <script src="js/core.js"></script>
     <script src="js/library.js"></script>
     <script src="js/live.js"></script>

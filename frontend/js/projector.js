@@ -15,8 +15,27 @@ const elements = {
     titleColTitle: document.getElementById('titleColTitle'),
     titleColKey: document.getElementById('titleColKey'),
     metaColAuthor: document.getElementById('metaColAuthor'),
+    messageFooterText: document.getElementById('messageFooterText'),
     projector: document.querySelector('.projector')
 };
+
+// What is on screen: 'song', 'bible' (a verse) or 'message' (a sermon,
+// scrolling). Each has its own layout class and display profile.
+let currentMode = 'song';
+function slideMode(data) {
+    if (data.mode === 'message') return 'message';
+    return data.isBible ? 'bible' : 'song';
+}
+function setMode(mode) {
+    currentMode = mode;
+    elements.projector.classList.toggle('bible-mode', mode === 'bible');
+    elements.projector.classList.toggle('message-mode', mode === 'message');
+}
+
+// projector.html?measure is a hidden copy of this page that the operator asks
+// where the lines of a message break (see window.messageMeasure below); it is
+// never shown and is not sent slides.
+const MEASURE_ONLY = new URLSearchParams(location.search).has('measure');
 
 let currentText = '';          // original (unwrapped) text of the current slide
 let currentSongId = null;
@@ -105,14 +124,21 @@ function applySettings(settings) {
             relayout();
         }
     }
+    // A message's lines break afresh; its place stays at the top.
+    if (messageView) {
+        relayoutMessage();
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(relayoutMessage);
+    }
 }
 
 // The operator sends the whole settings blob (song fields at the top level plus
-// an optional `bible` override). We split it into two display profiles and apply
-// whichever matches what's currently on screen; updateDisplay re-applies on a
-// song<->Bible switch. When Bible isn't split off, it simply reuses the songs'.
+// optional `bible` and `message` overrides). We split it into three display
+// profiles and apply whichever matches what's currently on screen;
+// updateDisplay re-applies when that changes. When Bible isn't split off, it
+// reuses the songs'; when the message profile isn't, it reuses the Bible's.
 let songSettings = null;
 let bibleSettings = null;
+let messageSettings = null;
 
 function ingestSettings(raw) {
     if (!raw || typeof raw !== 'object') return;
@@ -132,11 +158,21 @@ function ingestSettings(raw) {
         transition: base.transition || raw.transition,
         logo: raw.logo,
     };
-    applySettingsForMode(elements.projector.classList.contains('bible-mode'));
+    const m = raw.message || {};
+    const pct = Number(m.fontPct);
+    messageFontPct = pct >= MESSAGE_FONT_PCT.min && pct <= MESSAGE_FONT_PCT.max ? pct : MESSAGE_FONT_PCT.default;
+    messageSettings = m.separate ? {
+        typography: { ...(m.typography || bibleSettings.typography) },
+        background: m.background || bibleSettings.background,
+        layout: m.layout || bibleSettings.layout,
+        transition: m.transition || bibleSettings.transition,
+        logo: raw.logo,
+    } : bibleSettings;
+    applySettingsForMode(currentMode);
 }
 
-function applySettingsForMode(isBible) {
-    const next = isBible ? bibleSettings : songSettings;
+function applySettingsForMode(mode) {
+    const next = mode === 'message' ? messageSettings : mode === 'bible' ? bibleSettings : songSettings;
     if (next && next !== currentSettings) applySettings(next);
 }
 
@@ -176,6 +212,39 @@ function bibleTextToHtml(text) {
 // Strip [word] brackets to get plain text (used for font-size measurement).
 function bibleTextPlain(text) {
     return text.replace(/\[([^\]]+)\]/g, '$1');
+}
+
+// Message text is shown as written. Its bracketed notes ("[The listeners say
+// amen.]") keep their brackets, unlike scripture's supplied words, and are set
+// quieter than the words spoken. A '[' never closed is a note to the end of
+// the paragraph, and a ']' never opened one from its start.
+function messageTextToHtml(text) {
+    const t = String(text);
+    const note = (part) => `<span class="message-note">${escapeHtml(part)}</span>`;
+    let html = '';
+    let i = 0;
+    const firstClose = t.indexOf(']');
+    const firstOpen = t.indexOf('[');
+    if (firstClose >= 0 && (firstOpen < 0 || firstClose < firstOpen)) {
+        html += note(t.slice(0, firstClose + 1));
+        i = firstClose + 1;
+    }
+    while (i < t.length) {
+        const open = t.indexOf('[', i);
+        if (open < 0) { html += escapeHtml(t.slice(i)); break; }
+        html += escapeHtml(t.slice(i, open));
+        const close = t.indexOf(']', open);
+        const end = close < 0 ? t.length : close + 1;
+        html += note(t.slice(open, end));
+        i = end;
+    }
+    return html;
+}
+
+// A message's footer: its title and code.
+function setMessageFooter(footer) {
+    elements.messageFooterText.textContent = footer || '';
+    elements.songMetaBar.classList.toggle('visible', !!footer);
 }
 
 
@@ -282,9 +351,8 @@ function displayTextFor(original) {
 // (song change), so the outgoing slide isn't re-wrapped against the new map.
 function relayout(refreshDom = true) {
     if (!currentVerses.length) return;
-    const isBible = elements.projector.classList.contains('bible-mode');
     wrapMap = new Map();
-    if (!isBible && autoBreakEnabled()) {
+    if (currentMode === 'song' && autoBreakEnabled()) {
         for (const v of currentVerses) {
             if (!v || !v.trim()) continue;
             const broken = autoBreakVerse(v);
@@ -293,7 +361,7 @@ function relayout(refreshDom = true) {
     }
     songFontSize = computeSongFontSize(currentVerses.map(displayTextFor));
     applySongFontSize();
-    if (refreshDom && currentText && !isBible) {
+    if (refreshDom && currentText && currentMode === 'song') {
         const wrapped = displayTextFor(currentText);
         if (elements.lyricsText.textContent !== wrapped) {
             elements.lyricsText.textContent = wrapped;
@@ -334,7 +402,9 @@ function setAlert(text) {
 
 function updateDisplay(data) {
     const { text, label, isBlank, title, author, musical_key, songId, songNumber, verses,
-            hasPrev, hasNext, isBible } = data;
+            hasPrev, hasNext } = data;
+    const mode = slideMode(data);
+    const isBible = mode === 'bible';
 
     if (isBlank) {
         // Drop any in-flight swap and forget the current slide, so un-blanking
@@ -343,42 +413,56 @@ function updateDisplay(data) {
         if (pendingSwapTimer) { clearTimeout(pendingSwapTimer); pendingSwapTimer = null; }
         currentText = '';
         currentSongId = null;
+        messageView = null;
+        messageSwapTarget = null;
         elements.blankScreen.classList.add('active');
         elements.songTitleBar.classList.remove('visible');
         elements.songMetaBar.classList.remove('visible');
         elements.verseNavUp.classList.remove('visible');
         elements.verseNavDown.classList.remove('visible');
-        elements.projector.classList.remove('bible-mode');
+        setMode('song');
         return;
     }
 
     elements.blankScreen.classList.remove('active');
-    elements.projector.classList.toggle('bible-mode', !!isBible);
-    // Apply the matching display profile (song vs Bible) before any font/layout
-    // measurement below so the fit is computed against the right typography.
-    applySettingsForMode(!!isBible);
+    setMode(mode);
+    // Apply the matching display profile before any font/layout measurement
+    // below so the fit is computed against the right typography.
+    applySettingsForMode(mode);
 
-    if (isBible) {
-        // Bible mode: no chevrons, no meta bar
-        elements.verseNavUp.classList.remove('visible');
-        elements.verseNavDown.classList.remove('visible');
-        elements.songMetaBar.classList.remove('visible');
-    } else {
+    if (mode === 'song') {
         elements.verseNavUp.classList.toggle('visible', !!hasPrev);
         elements.verseNavDown.classList.toggle('visible', !!hasNext);
+    } else {
+        // Scripture and messages: no chevrons.
+        elements.verseNavUp.classList.remove('visible');
+        elements.verseNavDown.classList.remove('visible');
     }
+    if (isBible) elements.songMetaBar.classList.remove('visible');
+    if (mode === 'message') {
+        // No title bar or verse label; the footer is drawn with every move.
+        elements.songTitleBar.classList.remove('visible');
+        setMessageFooter(data.footer);
+        currentLabel = '';
+        refreshVerseLabel();
+        showMessage(data);
+        return;
+    }
+    messageView = null;
+    messageSwapTarget = null;
 
+    const slideVerses = verses && verses.length ? verses : (text ? [text] : []);
     if (songId !== currentSongId) {
         currentSongId = songId;
-        if (!isBible) {
+        if (mode === 'song') {
             updateSongMeta(title, author, musical_key, songNumber || songId);
-        } else {
+        } else if (isBible) {
             // Bible mode: just the reference, centred — no number or key.
             setTitleBar('', title, '');
         }
         // Songs share one size across every verse. Bible verses are sized one
         // at a time below, as each is put on screen.
-        currentVerses = isBible ? [] : (verses && verses.length ? verses : (text ? [text] : []));
+        currentVerses = isBible ? [] : slideVerses;
         relayout(false);
     }
 
@@ -549,6 +633,274 @@ function applySongFontSize() {
 }
 
 
+// ---------------------------------------------------------------------------
+// A message on screen: one column of its paragraphs, which scrolls. The
+// operator sends the paragraphs around the place at the top of the screen
+// (see message-scroll.js) and that place. A move within the same paragraphs
+// glides there; anything else (another message, a jump, coming back from
+// blank) fades in at the place, as a new slide does.
+
+const MESSAGE_GLIDE_FALLBACK_GAP_EM = 0.5;   // matches .message-para + .message-para
+
+let messageFontPct = MESSAGE_FONT_PCT.default;
+let messageView = null;        // what the column shows: {songId, first, count, anchor, starts}
+let messageSwapTarget = null;  // what a fade under way draws when it swaps
+
+function messageColumn() {
+    return elements.lyricsText.querySelector('.message-column');
+}
+
+// Draw a run of paragraphs, the first being paragraph `first` of the message.
+function drawMessageColumn(target) {
+    elements.lyricsText.innerHTML = `<div class="message-column">${target.paragraphs.map(text =>
+        `<p class="message-para">${text.trim() ? messageTextToHtml(text) : '&nbsp;'}</p>`).join('')}</div>`;
+    messageColumn().style.fontSize = `${messageFontPct}vh`;
+    messageView = {
+        songId: target.songId, first: target.first, count: target.paragraphs.length,
+        anchor: target.anchor, starts: new Map(),
+    };
+}
+
+// The column's measurements as laid out now (see message-scroll.js), or null
+// where nothing is laid out.
+function messageMetrics(column) {
+    const paras = column ? column.children : [];
+    if (!paras.length) return null;
+    const style = getComputedStyle(paras[0]);
+    const fontPx = parseFloat(style.fontSize);
+    let pitch = parseFloat(style.lineHeight);
+    if (!(pitch > 0)) pitch = fontPx * BIBLE_LINE_HEIGHT;
+    const gap = paras.length > 1
+        ? parseFloat(getComputedStyle(paras[1]).marginTop) || 0
+        : fontPx * MESSAGE_GLIDE_FALLBACK_GAP_EM;
+    const view = elements.lyricsContainer.getBoundingClientRect().height;
+    return pitch > 0 && view > 0 ? { pitch, gap, view } : null;
+}
+
+// Where each line of a drawn paragraph starts, as offsets in its text: for
+// each line after the first, the first character drawn on it, found by a
+// binary search on where characters are drawn.
+function messageParagraphStarts(p, pitch) {
+    const text = p.textContent;
+    const first = Math.max(0, text.search(/\S/));
+    const box = p.getBoundingClientRect();
+    const lines = pitch > 0 ? Math.round(box.height / pitch) : 1;
+    if (!(lines > 1)) return [first];
+    const linePitch = box.height / lines;
+    const nodes = [];
+    const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(), at = 0; n; at += n.length, n = walker.nextNode()) nodes.push({ node: n, at });
+    const range = document.createRange();
+    // The line the first character drawn at or after `i` is on (`lines` past the end).
+    const lineOf = (i) => {
+        for (; i < text.length; i++) {
+            if (/\s/.test(text[i])) continue;
+            let k = nodes.length - 1;
+            while (k > 0 && nodes[k].at > i) k--;
+            const { node, at } = nodes[k];
+            range.setStart(node, i - at);
+            range.setEnd(node, Math.min(node.length, i - at + 1));
+            const r = range.getBoundingClientRect();
+            if (r.height > 0) return Math.floor((r.top + r.height / 2 - box.top) / linePitch);
+        }
+        return lines;
+    };
+    const starts = [first];
+    let lo = first;
+    for (let line = 1; line < lines; line++) {
+        let hi = text.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (lineOf(mid) >= line) hi = mid;
+            else lo = mid + 1;
+        }
+        let at = lo;
+        while (at < text.length && /\s/.test(text[at])) at++;
+        if (at >= text.length) break;
+        starts.push(at);
+        lo = at + 1;
+    }
+    return starts;
+}
+
+// The drawn paragraphs as a layout for message-scroll.js. Line starts are
+// worked out as they are asked for, once per drawing.
+function messageWindowLayout(column, metrics) {
+    const v = messageView;
+    return {
+        count: column.children.length,
+        pitch: metrics.pitch, gap: metrics.gap, view: metrics.view,
+        starts(i) {
+            if (!v.starts.has(i)) v.starts.set(i, messageParagraphStarts(column.children[i], metrics.pitch));
+            return v.starts.get(i);
+        },
+    };
+}
+
+// The top of a line (a place among the drawn paragraphs), in px down the column.
+function messageLineTop(column, place, pitch) {
+    const box = column.children[place.paragraph].getBoundingClientRect();
+    const lines = Math.max(1, Math.round(box.height / pitch));
+    return box.top - column.getBoundingClientRect().top + place.line * (box.height / lines);
+}
+
+// Where the line holding the view's place is drawn, or null if it is not.
+function messageAnchorTop(column) {
+    const v = messageView;
+    const metrics = messageMetrics(column);
+    const rel = v ? v.anchor.paragraph - v.first : -1;
+    if (!metrics || rel < 0 || rel >= v.count) return null;
+    const layout = messageWindowLayout(column, metrics);
+    const place = messagePlaceAt(layout, rel, v.anchor.offset);
+    return { layout, metrics, place, top: messageLineTop(column, place, metrics.pitch) };
+}
+
+function setMessageShift(column, y, glide) {
+    column.style.transition = glide ? '' : 'none';
+    column.style.transform = `translateY(${y}px)`;
+}
+
+// How far the column is moved up now, part-way through a glide included.
+function currentMessageShift(column) {
+    const m = /matrix(3d)?\(([^)]+)\)/.exec(getComputedStyle(column).transform || '');
+    if (m) {
+        const values = m[2].split(',').map(Number);
+        return m[1] ? values[13] : values[5];
+    }
+    const inline = /translateY\((-?[\d.]+)px\)/.exec(column.style.transform);
+    return inline ? Number(inline[1]) : 0;
+}
+
+// Put the view's place at the top of the screen, showing whole lines only:
+// the space under the last line that fits is cut off, so no line is ever
+// half shown. `glide` moves there smoothly, otherwise it is at once.
+function placeMessage(glide) {
+    const column = messageColumn();
+    if (!column || !messageView) return;
+    const at = messageAnchorTop(column);
+    if (!at) {
+        setMessageShift(column, 0, false);
+        elements.lyricsContainer.style.setProperty('--message-cut', '0px');
+        return;
+    }
+    const { layout, metrics, place, top } = at;
+    const last = messageMoveLines(layout, place, messageLinesShown(layout, place) - 1);
+    const bottom = messageLineTop(column, last, metrics.pitch) + metrics.pitch;
+    setMessageShift(column, -top, glide);
+    elements.lyricsContainer.style.setProperty('--message-cut', `${Math.max(0, metrics.view - (bottom - top))}px`);
+}
+
+// Move to a new place in the message on screen. If it comes with other
+// paragraphs, they are drawn first with the text on screen kept where it is
+// (part-way through a glide included), so the screen never jumps.
+function scrollMessageTo(target) {
+    let column = messageColumn();
+    const v = messageView;
+    if (v.first !== target.first || v.count !== target.paragraphs.length) {
+        const before = messageAnchorTop(column);
+        const shift = currentMessageShift(column);
+        drawMessageColumn({ ...target, anchor: v.anchor });
+        column = messageColumn();
+        const after = before && messageAnchorTop(column);
+        if (after) {
+            setMessageShift(column, shift + before.top - after.top, false);
+            getComputedStyle(column).transform;   // settle there before gliding on
+        } else {
+            messageView.anchor = target.anchor;
+            placeMessage(false);
+            return;
+        }
+    }
+    messageView.anchor = target.anchor;
+    placeMessage(true);
+}
+
+function showMessage(data) {
+    const s = data.scroll || {};
+    const first = Number(s.first) || 0;
+    const target = {
+        songId: data.songId,
+        first,
+        paragraphs: Array.isArray(s.paragraphs) ? s.paragraphs.map(String) : [],
+        anchor: {
+            paragraph: Number(s.anchor && s.anchor.paragraph != null ? s.anchor.paragraph : first),
+            offset: Number(s.anchor && s.anchor.offset) || 0,
+        },
+    };
+    currentText = null;
+    currentVerses = [];
+    const same = !s.jump && !!messageView && messageView.songId === data.songId && currentSongId === data.songId;
+    currentSongId = data.songId;
+    // A fade under way draws the latest place when it swaps.
+    if (messageSwapTarget) {
+        messageSwapTarget = target;
+        return;
+    }
+    if (pendingSwapTimer) { clearTimeout(pendingSwapTimer); pendingSwapTimer = null; }
+    if (same && messageColumn()) {
+        scrollMessageTo(target);
+        return;
+    }
+    const trans = (currentSettings && currentSettings.transition) || {};
+    const dur = typeof trans.durationMs === 'number' ? trans.durationMs : 400;
+    const halfDur = trans.style === 'cut' ? 0 : Math.round(dur * 0.6);
+    messageSwapTarget = target;
+    elements.lyricsContainer.classList.add('transitioning');
+    pendingSwapTimer = setTimeout(() => {
+        pendingSwapTimer = null;
+        const next = messageSwapTarget;
+        messageSwapTarget = null;
+        drawMessageColumn(next);
+        placeMessage(false);
+        elements.lyricsContainer.classList.remove('transitioning');
+    }, halfDur);
+}
+
+// The settings, a font or the window's size changed: the lines break afresh
+// and the place stays at the top.
+function relayoutMessage() {
+    const column = messageColumn();
+    if (!column || !messageView || currentMode !== 'message') return;
+    column.style.fontSize = `${messageFontPct}vh`;
+    messageView.starts = new Map();
+    placeMessage(false);
+}
+
+// For the operator, which moves the text by lines and sends the projector the
+// paragraphs it needs, so must know where lines break and how many fit. It
+// asks a hidden copy of this page (projector.html?measure), sized as the
+// projector is, which lays text out with this same code. Measuring is
+// synchronous, so moving never waits.
+let preparedSettingsJson = null;
+window.messageMeasure = {
+    // Take the operator's current settings and the message's footer, so text
+    // is measured in the message profile's font and in the room the footer
+    // leaves.
+    prepare(settings, footer) {
+        const json = JSON.stringify(settings || null);
+        if (settings && json !== preparedSettingsJson) {
+            preparedSettingsJson = json;
+            ingestSettings(settings);
+        }
+        setMode('message');
+        applySettingsForMode('message');
+        setMessageFooter(footer);
+    },
+    // {pitch, gap, view} in px (see message-scroll.js), or null if this copy
+    // cannot lay text out.
+    metrics() {
+        drawMessageColumn({ songId: null, first: 0, paragraphs: ['M', 'M'], anchor: { paragraph: 0, offset: 0 } });
+        return messageMetrics(messageColumn());
+    },
+    // Where each line of a paragraph starts, as offsets in its text.
+    lines(text) {
+        drawMessageColumn({ songId: null, first: 0, paragraphs: [String(text)], anchor: { paragraph: 0, offset: 0 } });
+        const column = messageColumn();
+        const metrics = messageMetrics(column);
+        return messageParagraphStarts(column.children[0], metrics ? metrics.pitch : 0);
+    },
+};
+
 // Tauri events drive the real projector window. postMessage drives the
 // in-operator preview iframe — same projector page, fed by the operator
 // directly. Both are registered unconditionally so a single source file
@@ -601,6 +953,20 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('DOMContentLoaded', () => {
     elements.lyricsText.textContent = '';
+    // The measuring copy tells the operator once it can measure, and again
+    // when a font finishes loading, since either can change where lines
+    // break. It is not sent slides, so needs no state pump, and it is handed
+    // the operator's settings each time (which may not be saved yet), so it
+    // does not load them itself.
+    if (MEASURE_ONLY) {
+        const changed = () => {
+            try { window.parent.postMessage({ type: 'message-measure-changed' }, '*'); }
+            catch (e) { /* no operator page */ }
+        };
+        changed();
+        if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', changed);
+        return;
+    }
     loadInitialSettings();
     // Iframe preview: tell the parent we're alive so it can pump current state.
     if (window.parent && window.parent !== window) {
@@ -610,14 +976,34 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
+// The projector window goes fullscreen on whatever screen it is given, so it
+// tells the operator its size, which message paragraphs are measured at (see
+// setMessageMeasureSize in messages.js). Only the real window does; the
+// previews and the measuring copy are the operator's own.
+function reportProjectorSize() {
+    if (MEASURE_ONLY || window.parent !== window || !window.__TAURI__?.event?.emit) return;
+    window.__TAURI__.event.emit('projector-size', { width: window.innerWidth, height: window.innerHeight })
+        .catch?.(() => { /* the operator is gone */ });
+}
+document.addEventListener('DOMContentLoaded', reportProjectorSize);
+
 // Recompute the song-wide size when the window moves or the resolution changes.
 let resizeRaf;
 window.addEventListener('resize', () => {
     cancelAnimationFrame(resizeRaf);
-    resizeRaf = requestAnimationFrame(() => relayout());
+    resizeRaf = requestAnimationFrame(() => {
+        relayout();
+        relayoutMessage();
+        reportProjectorSize();
+    });
 });
 
 // The first verse can render before the web font loads; recompute once ready.
 if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => relayout());
+    document.fonts.ready.then(() => { relayout(); relayoutMessage(); });
+}
+// A font chosen later loads later still, after `ready` has long resolved: a
+// message's lines break afresh when it arrives.
+if (document.fonts && document.fonts.addEventListener) {
+    document.fonts.addEventListener('loadingdone', () => relayoutMessage());
 }

@@ -6,27 +6,42 @@
 
 // ---------- Display settings ----------
 
-// Which display profile the settings dialog is editing: 'song' or 'bible'.
+// Which display profile the settings dialog is editing: 'song', 'bible' or
+// 'message'.
 let settingsTarget = 'song';
+
+// The profile Bible verses are shown with: their own once "separate" is on,
+// otherwise the songs'.
+function bibleDisplaySettings() {
+    return state.settings.bible.separate ? state.settings.bible : state.settings;
+}
 
 // The settings object the dialog's controls currently read/write. Bible verses
 // only use their own profile once the user turns on "separate"; until then the
-// Bible target is a locked, read-only view of the song settings.
+// Bible target is a locked, read-only view of the song settings. Likewise the
+// message target, of whatever the Bible uses.
 function targetSettings() {
-    if (settingsTarget === 'bible' && state.settings.bible.separate) {
-        return state.settings.bible;
+    if (settingsTarget === 'bible') return bibleDisplaySettings();
+    if (settingsTarget === 'message') {
+        return state.settings.message.separate ? state.settings.message : bibleDisplaySettings();
     }
     return state.settings;
 }
 
 // Alignment is always per-profile (see DEFAULT_SETTINGS.bible), so it reads
 // and writes the Bible's own typography even while the rest mirrors songs.
+// A message display that mirrors the Bible's takes its alignment too.
 function alignmentSettings() {
-    return settingsTarget === 'bible' ? state.settings.bible.typography : state.settings.typography;
+    if (settingsTarget === 'message' && state.settings.message.separate) return state.settings.message.typography;
+    return settingsTarget === 'song' ? state.settings.typography : state.settings.bible.typography;
 }
 
 function bibleIsLocked() {
     return settingsTarget === 'bible' && !state.settings.bible.separate;
+}
+
+function messageIsLocked() {
+    return settingsTarget === 'message' && !state.settings.message.separate;
 }
 
 // Deep-copy the song display fields (everything except the logo, which stays
@@ -46,18 +61,43 @@ function copySongDisplayToBible() {
     state.settings.bible.typography.alignment = alignment;
 }
 
+// Copy what the Bible is shown with onto the message profile, alignment
+// included, keeping the message's own text size.
+function copyBibleDisplayToMessage() {
+    const from = bibleDisplaySettings();
+    Object.assign(state.settings.message, JSON.parse(JSON.stringify({
+        typography: from.typography, background: from.background,
+        layout: from.layout, transition: from.transition
+    })));
+    state.settings.message.typography.alignment = state.settings.bible.typography.alignment;
+}
+
+function formatMessageFontSize(pct) {
+    return `${pct}% · ${Math.round(pct * 10.8)} px at 1080p`;
+}
+
 // Reflect the current edit target in the target-row controls and lock the
-// display panels while Bible mirrors the song settings.
+// display panels while Bible mirrors the song settings, or the message display
+// the Bible's.
 function syncTargetRow() {
     elements.setDisplayTarget.querySelectorAll('button').forEach(b =>
         b.classList.toggle('active', b.dataset.value === settingsTarget));
     const onBible = settingsTarget === 'bible';
+    const onMessage = settingsTarget === 'message';
     elements.bibleTargetOptions.classList.toggle('hidden', !onBible);
     elements.setBibleSameAsSongs.checked = !state.settings.bible.separate;
     elements.bibleMatchSongBtn.classList.toggle('hidden', !onBible || !state.settings.bible.separate);
+    elements.messageTargetOptions.classList.toggle('hidden', !onMessage);
+    elements.setMessageSameAsBible.checked = !state.settings.message.separate;
+    elements.messageMatchBibleBtn.classList.toggle('hidden', !onMessage || !state.settings.message.separate);
     // The logo is a shared holding slide, not a per-profile option.
-    elements.setLogoGroup.classList.toggle('hidden', onBible);
+    elements.setLogoGroup.classList.toggle('hidden', settingsTarget !== 'song');
+    // A message has a footer and a text size, not a song's bars and lines.
+    elements.messageFontGroup.classList.toggle('hidden', !onMessage);
+    document.querySelectorAll('.song-layout-setting').forEach(el => el.classList.toggle('hidden', onMessage));
+    elements.setShowTitleBarLabel.textContent = onMessage ? 'Show the title and date code' : 'Show song title bar';
     elements.settingsContent.classList.toggle('display-locked', bibleIsLocked());
+    elements.settingsContent.classList.toggle('message-locked', messageIsLocked());
 }
 
 // Copy a saved background onto the defaults. The nested gradient/image objects
@@ -86,6 +126,20 @@ function mergeSettings(saved) {
             if (sb.background) mergeBackground(out.bible.background, sb.background);
             if (sb.layout) Object.assign(out.bible.layout, sb.layout);
             if (sb.transition) Object.assign(out.bible.transition, sb.transition);
+        }
+        // Settings saved before the message library had no `message` block, and
+        // so load as "same display as Bible".
+        if (saved.message && typeof saved.message === 'object') {
+            const sm = saved.message;
+            out.message.separate = !!sm.separate;
+            out.message.initialized = !!sm.initialized;
+            if (Number.isFinite(sm.fontPct)) {
+                out.message.fontPct = Math.min(MESSAGE_FONT_PCT.max, Math.max(MESSAGE_FONT_PCT.min, sm.fontPct));
+            }
+            if (sm.typography) Object.assign(out.message.typography, sm.typography);
+            if (sm.background) mergeBackground(out.message.background, sm.background);
+            if (sm.layout) Object.assign(out.message.layout, sm.layout);
+            if (sm.transition) Object.assign(out.message.transition, sm.transition);
         }
     }
     return out;
@@ -202,6 +256,10 @@ function syncSettingsForm() {
     });
     elements.setTransDuration.value = s.transition.durationMs;
     elements.setTransDurationValue.textContent = `${s.transition.durationMs} ms`;
+
+    const fontPct = state.settings.message.fontPct;
+    elements.setMessageFont.value = fontPct;
+    elements.setMessageFontValue.textContent = formatMessageFontSize(fontPct);
 }
 
 function syncBgImageThumb() {
@@ -260,9 +318,14 @@ function onSettingsChanged() {
     if (settingsTarget === 'bible' && state.settings.bible.separate) {
         state.settings.bible.initialized = true;
     }
+    if (settingsTarget === 'message' && state.settings.message.separate) {
+        state.settings.message.initialized = true;
+    }
     updateSettingsPreview();
     pushSettingsToProjector();
     scheduleSaveSettings();
+    // The lines of a message on screen may now break differently.
+    messageDisplayChanged();
 }
 
 function openSettingsModal() {
@@ -601,6 +664,28 @@ function initSettingsDialog() {
     elements.bibleMatchSongBtn.addEventListener('click', () => {
         copySongDisplayToBible();
         syncSettingsForm();
+        onSettingsChanged();
+    });
+    elements.setMessageSameAsBible.addEventListener('change', () => {
+        const separate = !elements.setMessageSameAsBible.checked;
+        state.settings.message.separate = separate;
+        // Seeded from the Bible's look the first time it's split off.
+        if (separate && !state.settings.message.initialized) {
+            copyBibleDisplayToMessage();
+            state.settings.message.initialized = true;
+        }
+        syncSettingsForm();
+        onSettingsChanged();
+    });
+    elements.messageMatchBibleBtn.addEventListener('click', () => {
+        copyBibleDisplayToMessage();
+        syncSettingsForm();
+        onSettingsChanged();
+    });
+    elements.setMessageFont.addEventListener('input', () => {
+        const pct = parseFloat(elements.setMessageFont.value);
+        state.settings.message.fontPct = pct;
+        elements.setMessageFontValue.textContent = formatMessageFontSize(pct);
         onSettingsChanged();
     });
 

@@ -91,7 +91,7 @@ const messageLibrary = {
     status: {
         installed: true, tab_label: 'The Test Tab', book_collection: 'Book Of Lamps',
         book_title: 'An Account Of The Lamps', language: 'en', built_at: '2026-11-20T10:00:00Z',
-        numbering_id: 'test', message_count: 6, book_chapter_count: 3, paragraph_count: 12,
+        numbering_id: 'test', message_count: 6, book_chapter_count: 3, paragraph_count: 14,
     },
     works: messageWorks,
     paragraphs: {
@@ -112,7 +112,16 @@ const messageLibrary = {
             paragraph(8, 2, 'The spring will surely come. [The listeners say amen.]'),
         ],
         '60-0229': [paragraph(9, 1, 'A quiet harbour <is> no place to stay & rest for ever.')],
-        '61-1231': [paragraph(10, 1, 'Trim the lamps and light the lanterns.')],
+        '61-1231': [
+            paragraph(10, 1, 'Trim the lamps and light the lanterns.'),
+            // Long enough to run over several screens when a test says a screen holds a few lines.
+            paragraph(11, 2, 'The first lantern hung by the door. The second lantern hung by the gate. ' +
+                'The third lantern hung by the well. The fourth lantern hung by the barn. ' +
+                'The fifth lantern hung by the mill. The sixth lantern hung by the bridge. ' +
+                'The seventh lantern hung by the road. [The listeners say amen.] ' +
+                'The eighth lantern hung by the church.'),
+            paragraph(12, 3, 'Then the whole town could see its way home.'),
+        ],
     },
 };
 

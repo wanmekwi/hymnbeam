@@ -71,6 +71,24 @@ const DEFAULT_SETTINGS = {
         },
         layout: { showTitleBar: true, showMetaBar: true, showVerseLabel: false, autoBreakLines: true, safeAreaPct: 5 },
         transition: { style: 'fade-up', durationMs: 400 }
+    },
+    // The message library's display (The Message target). While `separate` is
+    // false, paragraphs look exactly as scripture does, alignment included.
+    // `fontPct` applies either way: the size of the text, as a share of the
+    // screen height (see MESSAGE_FONT_PCT in message-scroll.js for its range).
+    message: {
+        separate: false,
+        initialized: false,
+        fontPct: MESSAGE_FONT_PCT.default,
+        typography: { fontFamily: 'Montserrat', fontWeight: 600, alignment: 'left' },
+        background: {
+            kind: 'solid',
+            color: '#000000',
+            gradient: { from: '#000000', to: '#1a1a2e', angle: 180 },
+            image: { filename: null, dim: 0.4 }
+        },
+        layout: { showTitleBar: true, showMetaBar: true, showVerseLabel: false, autoBreakLines: true, safeAreaPct: 5 },
+        transition: { style: 'fade-up', durationMs: 400 }
     }
 };
 
@@ -247,6 +265,15 @@ const elements = {
     settingsPreview: document.getElementById('settingsPreview'),
     settingsPreviewText: document.querySelector('.settings-preview-text'),
     settingsTargetRow: document.getElementById('settingsTargetRow'),
+    setDisplayTargetMessage: document.getElementById('setDisplayTargetMessage'),
+    messageTargetOptions: document.getElementById('messageTargetOptions'),
+    setMessageSameAsBible: document.getElementById('setMessageSameAsBible'),
+    messageMatchBibleBtn: document.getElementById('messageMatchBibleBtn'),
+    messageFontGroup: document.getElementById('messageFontGroup'),
+    setMessageFont: document.getElementById('setMessageFont'),
+    setMessageFontValue: document.getElementById('setMessageFontValue'),
+    setShowTitleBarLabel: document.getElementById('setShowTitleBarLabel'),
+    messageMeasureFrame: document.getElementById('messageMeasureFrame'),
     setDisplayTarget: document.getElementById('setDisplayTarget'),
     bibleTargetOptions: document.getElementById('bibleTargetOptions'),
     setBibleSameAsSongs: document.getElementById('setBibleSameAsSongs'),

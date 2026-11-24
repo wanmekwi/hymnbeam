@@ -2236,6 +2236,11 @@ body {
     gap: 14px;
 }
 
+/* .hidden comes earlier in this file, so the display above would win over it. */
+.bible-target-options.hidden {
+    display: none;
+}
+
 .toggle-inline {
     display: inline-flex;
     align-items: center;
@@ -2244,6 +2249,13 @@ body {
     color: var(--text-secondary);
     cursor: pointer;
     user-select: none;
+}
+
+/* While the message display mirrors the Bible's, everything shows read-only
+   (alignment too) except the message's own text size. */
+.settings-content.message-locked .settings-panel > :not(.message-own-setting) {
+    opacity: 0.45;
+    pointer-events: none;
 }
 
 /* While Bible mirrors the song settings, its panels show read-only. The target
@@ -2976,4 +2988,26 @@ button.message-show-all:hover {
 
 .message-library-footer .btn-link {
     font-size: 11px;
+}
+
+/* The hidden copy of the projector page that message lines are measured in.
+   Off screen and invisible, but laid out at the projector's size (the
+   previews' 1920×1080 until the projector has said). */
+.measure-frame {
+    position: fixed;
+    left: -20000px;
+    top: 0;
+    width: 1920px;
+    height: 1080px;
+    border: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+/* Over the message preview, taking the mouse wheel to scroll the message on
+   screen (the preview's own page would otherwise get it). */
+.preview-scroll-surface {
+    position: absolute;
+    inset: 0;
+    cursor: ns-resize;
 }

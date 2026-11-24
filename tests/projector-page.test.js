@@ -348,3 +348,172 @@ test('short lines are left alone, and a break never leaves a stub', async () => 
     const share = left.length / (left.length + right.length);
     assert.equal(share > 0.3 && share < 0.7, true, `balanced halves, got ${left.length}/${right.length}`);
 });
+
+// ---- Messages ------------------------------------------------------------------
+
+// A message as the operator sends it: paragraphs 10 and 11 of 61-1231, with
+// the first line of paragraph 10 at the top of the screen.
+const LAMPS = ['The first lamp was lit. [The listeners say amen.]', 'The second lamp was lit.'];
+const message = (scroll = {}, overrides = {}) => ({
+    mode: 'message', label: '', isBlank: false, isBible: false, title: 'Lamps And Lanterns',
+    footer: 'Lamps And Lanterns · 61-1231', songId: 'message-61-1231', songNumber: null, author: null,
+    musical_key: null, hasPrev: false, hasNext: false,
+    scroll: { first: 10, paragraphs: LAMPS, anchor: { paragraph: 10, offset: 0 }, jump: true, ...scroll },
+    ...overrides,
+});
+const column = () => p.document.querySelector('#lyricsText .message-column');
+const paragraphsShown = () => [...p.document.querySelectorAll('#lyricsText .message-para')].map(e => e.innerHTML);
+const fading = () => p.document.querySelector('.lyrics-container').classList.contains('transitioning');
+
+test('a message shows its paragraphs as one column, with its footer and no title bar', async () => {
+    p = await bootProjector({ settings: cut });
+    await p.send('update-lyrics', message());
+    assert.equal(p.projectorHas('message-mode'), true);
+    assert.equal(p.projectorHas('bible-mode'), false);
+    assert.equal(p.has('songTitleBar', 'visible'), false);
+    assert.equal(p.has('songMetaBar', 'visible'), true, 'the footer sits where the meta bar does');
+    assert.equal(el('messageFooterText').textContent, 'Lamps And Lanterns · 61-1231');
+    assert.equal(p.has('verseNavDown', 'visible'), false);
+    assert.deepEqual(paragraphsShown(), [
+        'The first lamp was lit. <span class="message-note">[The listeners say amen.]</span>',
+        'The second lamp was lit.',
+    ]);
+});
+
+test('notes in a message keep their brackets, and markup is shown, not run', async () => {
+    p = await bootProjector({ settings: cut });
+    await p.send('update-lyrics', message({ paragraphs: ['A <b>bold</b> claim & more. [Note <i>here</i>]', '[Never closed'] }));
+    assert.equal(p.document.querySelector('#lyricsText b'), null);
+    assert.deepEqual(paragraphsShown(), [
+        'A &lt;b&gt;bold&lt;/b&gt; claim &amp; more. <span class="message-note">[Note &lt;i&gt;here&lt;/i&gt;]</span>',
+        '<span class="message-note">[Never closed</span>',
+    ]);
+});
+
+test('moving on within the paragraphs it has glides there, without fading or drawing them again', async () => {
+    p = await bootProjector();                       // the default fade
+    await p.send('update-lyrics', message());
+    assert.equal(fading(), true, 'a message put on screen fades in, as a slide does');
+    await p.sleep(300);
+    const drawn = column();
+    assert.ok(drawn);
+    await p.send('update-lyrics', message({ anchor: { paragraph: 10, offset: 24 }, jump: false }));
+    assert.equal(fading(), false);
+    assert.equal(column(), drawn, 'the same column, moved');
+
+    // On into paragraphs it was not sent before: drawn again, still without a fade.
+    await p.send('update-lyrics', message({
+        first: 11, paragraphs: [LAMPS[1], 'The third lamp was lit.'], anchor: { paragraph: 11, offset: 0 }, jump: false,
+    }));
+    assert.equal(fading(), false);
+    assert.notEqual(column(), drawn);
+    assert.deepEqual(paragraphsShown(), ['The second lamp was lit.', 'The third lamp was lit.']);
+});
+
+test('a jump within the message, or another message, fades to its place', async () => {
+    p = await bootProjector();
+    await p.send('update-lyrics', message());
+    await p.sleep(300);
+    await p.send('update-lyrics', message({ anchor: { paragraph: 11, offset: 0 }, jump: true }));
+    assert.equal(fading(), true);
+    await p.sleep(300);
+    assert.equal(fading(), false);
+
+    await p.send('update-lyrics', message({ first: 0, paragraphs: ['Another message.'], anchor: { paragraph: 0, offset: 0 },
+        jump: false }, { songId: 'message-62-0101', footer: 'Another · 62-0101' }));
+    assert.equal(fading(), true, 'another message, even sent as a move');
+    await p.sleep(300);
+    assert.deepEqual(paragraphsShown(), ['Another message.']);
+    assert.equal(el('messageFooterText').textContent, 'Another · 62-0101');
+});
+
+test('moves sent while a fade is under way end on the last of them', async () => {
+    p = await bootProjector();
+    await p.send('update-lyrics', message());
+    await p.send('update-lyrics', message({ first: 11, paragraphs: [LAMPS[1]], anchor: { paragraph: 11, offset: 0 }, jump: false }));
+    await p.sleep(300);
+    assert.deepEqual(paragraphsShown(), ['The second lamp was lit.']);
+});
+
+test('blanking a message hides it and its footer, and un-blanking draws it again at its place', async () => {
+    p = await bootProjector();
+    await p.send('update-lyrics', message());
+    await p.sleep(300);
+    await p.send('update-lyrics', message({}, { isBlank: true }));
+    assert.equal(p.has('songMetaBar', 'visible'), false);
+    assert.equal(p.projectorHas('message-mode'), false);
+    // The operator sends what is live again, which may be a move.
+    await p.send('update-lyrics', message({ anchor: { paragraph: 11, offset: 0 }, jump: false }));
+    assert.equal(fading(), true, 'it comes back as a new slide, at its place, rather than gliding from the old one');
+    await p.sleep(300);
+    assert.equal(p.has('songMetaBar', 'visible'), true);
+    assert.equal(p.projectorHas('message-mode'), true);
+    assert.equal(paragraphsShown().length, 2);
+});
+
+test('going from a message back to a song or scripture restores their layouts', async () => {
+    p = await bootProjector({ settings: cut });
+    await p.send('update-lyrics', message());
+    await p.send('update-lyrics', slide());
+    assert.equal(p.projectorHas('message-mode'), false);
+    assert.equal(p.has('songTitleBar', 'visible'), true);
+    assert.equal(el('titleColTitle').textContent, 'Amazing Grace');
+    assert.equal(p.text(), 'Amazing grace, how sweet the sound');
+
+    await p.send('update-lyrics', message());
+    await p.send('update-lyrics', verse());
+    assert.equal(p.projectorHas('bible-mode'), true);
+    assert.equal(p.has('songMetaBar', 'visible'), false);
+    assert.equal(p.has('songTitleBar', 'visible'), true);
+    assert.match(el('songTitleBar').textContent, /Psalms 23:1/);
+
+    await p.send('update-lyrics', message());
+    assert.equal(p.projectorHas('message-mode'), true);
+    assert.equal(paragraphsShown().length, 2, 'and back to the message');
+});
+
+test('messages use the Bible\'s look until their own is split off', async () => {
+    const settings = {
+        ...cut, typography: { fontFamily: 'Inter' },
+        bible: { separate: true, typography: { fontFamily: 'Lora', alignment: 'left' } },
+    };
+    p = await bootProjector({ settings });
+    await p.send('update-lyrics', message());
+    assert.match(rootVar('--font-display'), /Lora/, 'the same as scripture');
+
+    await p.send('apply-settings', {
+        ...settings, message: { separate: true, typography: { fontFamily: 'EB Garamond', alignment: 'center' } },
+    });
+    assert.match(rootVar('--font-display'), /EB Garamond/);
+    assert.equal(el('lyricsText').style.textAlign, 'center');
+    await p.send('update-lyrics', verse());
+    assert.match(rootVar('--font-display'), /Lora/, 'scripture keeps its own');
+});
+
+test('message text is the size set for it, as a share of the screen height', async () => {
+    p = await bootProjector({ settings: { ...cut, message: { fontPct: 5 } } });
+    await p.send('update-lyrics', message());
+    assert.equal(column().style.fontSize, '5vh');
+    await p.send('apply-settings', { ...cut, message: { fontPct: 3.25 } });
+    assert.equal(column().style.fontSize, '3.25vh', 'changed on screen');
+    await p.send('apply-settings', { ...cut, message: { fontPct: 40 } });
+    assert.equal(column().style.fontSize, '4.5vh', 'out of range: the default');
+});
+
+test('the operator can ask where lines break and how many fit', async () => {
+    p = await bootProjector({ settings: cut });
+    const measure = p.window.messageMeasure;
+    measure.prepare({ ...cut, message: { separate: false } }, 'Lamps And Lanterns · 61-1231');
+    // jsdom lays nothing out: no measurements, and a paragraph is one line.
+    assert.equal(measure.metrics(), null);
+    assert.deepEqual([...measure.lines('  Some words.')], [2]);
+});
+
+test('the projector window tells the operator its size; a preview does not', async () => {
+    p = await bootProjector({ settings: cut });
+    assert.deepEqual(p.emitted.filter(e => e.name === 'projector-size').at(-1)?.payload,
+        { width: p.window.innerWidth, height: p.window.innerHeight });
+    p.close();
+    p = await bootProjector({ settings: cut, tauri: false });
+    assert.deepEqual(p.emitted, []);
+});

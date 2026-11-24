@@ -91,7 +91,8 @@ without leaving the app. On Windows, `⌘` below is `Ctrl`.
 
 | Key | Action |
 |-----|--------|
-| `→` / `←` | Next / previous verse, or paragraph of a message on screen |
+| `→` / `←` | Next / previous verse, or move a message on screen three lines |
+| `⇧→` / `⇧←` | Move a message on screen a screen at a time (the mouse wheel over its preview works too) |
 | `↓` / `↑` | Move through the message in the reader |
 | `Enter` | Project the highlighted paragraph |
 | `1`–`9` | Jump to verse 1–9 |

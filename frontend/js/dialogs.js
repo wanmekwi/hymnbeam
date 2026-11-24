@@ -45,7 +45,8 @@ const SHORTCUT_GROUPS = [
     {
         title: 'During the service',
         items: [
-            { keys: ['→', '/', '←'], action: 'Next / previous verse, or paragraph of a message on screen' },
+            { keys: ['→', '/', '←'], action: 'Next / previous verse, or move a message on screen three lines' },
+            { keys: ['{shift}→', '/', '{shift}←'], action: 'Move a message on screen a screen at a time' },
             { keys: ['↓', '/', '↑'], action: 'Move through the message in the reader' },
             { keys: ['Enter'], action: 'Project the highlighted paragraph' },
             { keys: ['1'], action: 'Jump to verse 1–9' , label: '1–9' },
