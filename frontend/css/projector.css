@@ -398,10 +398,11 @@ body {
 }
 
 /* A message: prose like scripture, with no title bar, in one column that
- * scrolls. Its footer (the title and code) sits in the meta bar's place, which
- * is always laid out in this mode and takes its own room at the foot of the
- * screen, rather than lying over it, so the text has the space above it to
- * itself even when a long title wraps onto a second line. */
+ * scrolls. Its details (the title, date code and place) sit in the meta bar,
+ * which is always laid out in this mode and takes its own room at the foot of
+ * the screen (or the top: see message-details-top below), rather than lying
+ * over the text, so the text has the rest of the screen to itself even when a
+ * long title wraps onto a second line. */
 .projector.message-mode .song-title-bar {
     display: none;
 }
@@ -490,6 +491,31 @@ body {
 
 .message-para + .message-para {
     margin-top: 0.5em;
+}
+
+/* The message's details at the top of the screen (the default): the bar comes
+ * first, taking its room above the text, with its rule drawn under it, and
+ * the larger gap moves to the foot. */
+.projector.message-mode.message-details-top .song-meta-bar {
+    order: -1;
+    margin: calc(-1 * var(--safe-area)) calc(-1 * var(--safe-area)) 0;
+    padding: 24px 48px 20px;
+}
+
+.projector.message-mode.message-details-top .song-meta-bar::before {
+    top: auto;
+    bottom: 0;
+}
+
+.projector.message-mode.message-details-top .lyrics-container {
+    margin-top: 24px;
+    margin-bottom: clamp(16px, 5vh, 72px);
+}
+
+/* In capitals (the default), a little spaced, as a heading. */
+.projector.message-mode.message-details-caps .message-footer-text {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
 }
 
 /* "Show the title" off hides the words but keeps their space, so turning it

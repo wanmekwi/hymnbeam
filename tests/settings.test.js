@@ -37,6 +37,7 @@ test('with nothing saved the defaults are used', async () => {
     assert.equal(s.bible.typography.alignment, 'left', 'scripture reads flush-left by default');
     assert.equal(s.message.separate, false, 'messages look as scripture does');
     assert.equal(s.message.fontPct, 4.5);
+    assert.deepEqual(s.message.details, { position: 'top', caps: true }, 'a sermon\'s details at the top, in capitals');
 });
 
 test('saved settings are loaded, and anything they lack falls back to the default', async () => {
@@ -345,11 +346,50 @@ test('the text size is the message display\'s own, even while it mirrors', async
     assert.equal(hidden('messageFontGroup'), true, 'scripture is sized to fit, as before');
 });
 
-test('a message has a footer, not a song\'s bars, so only that toggle is offered', async () => {
+test('where a sermon\'s details go, and whether in capitals, is the message display\'s own', async () => {
+    await openSettings();
+    assert.equal(hidden('messageDetailsGroup'), true, 'not for songs');
+    assert.equal(hidden('messageDetailsCapsGroup'), true);
+    await pick('setDisplayTarget', 'message');
+    assert.equal(hidden('messageDetailsGroup'), false);
+    assert.equal(hidden('messageDetailsCapsGroup'), false);
+    assert.equal(locked(), true, 'while it mirrors the Bible\'s display');
+    for (const id of ['messageDetailsGroup', 'messageDetailsCapsGroup']) {
+        assert.equal(app.$(`#${id}`).classList.contains('message-own-setting'), true, `${id} can still be changed`);
+    }
+    assert.equal(active('setMessageDetailsPosition'), 'top');
+    assert.equal(app.$('#setMessageDetailsCaps').checked, true);
+
+    await pick('setMessageDetailsPosition', 'bottom');
+    assert.equal(active('setMessageDetailsPosition'), 'bottom');
+    assert.deepEqual(pushed().message.details, { position: 'bottom', caps: true });
+    await app.check('#setMessageDetailsCaps', false);
+    assert.deepEqual(pushed().message.details, { position: 'bottom', caps: false });
+    assert.equal(pushed().message.separate, false, 'changing them does not split the profile off');
+    await waitForSave();
+    assert.deepEqual(saved().message.details, { position: 'bottom', caps: false }, 'both changes saved together');
+
+    await pick('setDisplayTarget', 'bible');
+    assert.equal(hidden('messageDetailsGroup'), true, 'not for scripture');
+    assert.equal(hidden('messageDetailsCapsGroup'), true);
+});
+
+test('saved sermon details are loaded, and anything missing or wrong takes the default', async () => {
+    await openSettings({ settings: { message: { details: { position: 'bottom', caps: false } } } });
+    assert.deepEqual(settings().message.details, { position: 'bottom', caps: false });
+    app.close();
+    await openSettings({ settings: { message: { fontPct: 5 } } });
+    assert.deepEqual(settings().message.details, { position: 'top', caps: true }, 'saved before the option was offered');
+    app.close();
+    await openSettings({ settings: { message: { details: { position: 'left', caps: 'yes' } } } });
+    assert.deepEqual(settings().message.details, { position: 'top', caps: true });
+});
+
+test('a message has its details, not a song\'s bars, so only that toggle is offered', async () => {
     await openSettings();
     await pick('setDisplayTarget', 'message');
     await app.check('#setMessageSameAsBible', false);
-    assert.equal(app.$('#setShowTitleBarLabel').textContent, 'Show the title and date code');
+    assert.equal(app.$('#setShowTitleBarLabel').textContent, 'Show the sermon details');
     for (const id of ['setShowMetaBar', 'setShowVerseLabel', 'setAutoBreakLines']) {
         assert.equal(app.$(`#${id}`).closest('.form-group').classList.contains('hidden'), true, id);
     }

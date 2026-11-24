@@ -591,10 +591,10 @@ const MESSAGE_HOLD_FAST_LINE_MS = 25;    // and with Shift held too, this often
 const MESSAGE_WHEEL_PX_PER_SCREEN = 720;  // wheel or trackpad travel, in this window, for a screenful
 const MESSAGE_ROLL_STREAM_MS = 60;       // rolls closer together than this are one stream
 
-// The projector's footer: the message's title and code, or for the book, the
-// chapter's title and the book's name.
+// The message's details on the projector: its title, date code and place, or
+// for the book, the chapter's title and the book's name.
 function messageFooter(work) {
-    const parts = work.kind === 'book' ? [work.title, messageBookName(work)] : [work.title, work.code];
+    const parts = work.kind === 'book' ? [work.title, messageBookName(work)] : [work.title, work.code, work.location];
     return parts.filter(Boolean).join(' · ');
 }
 

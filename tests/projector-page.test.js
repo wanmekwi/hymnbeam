@@ -380,6 +380,20 @@ test('a message shows its paragraphs as one column, with its footer and no title
     ]);
 });
 
+test('a message\'s details go at the top in capitals, unless the settings say the foot or as written', async () => {
+    p = await bootProjector({ settings: cut });
+    await p.send('update-lyrics', message());
+    assert.equal(el('messageFooterText').textContent, 'Lamps And Lanterns · 61-1231', 'the words as sent; capitals are the stylesheet\'s');
+    assert.equal(p.projectorHas('message-details-top'), true, 'the top, by default');
+    assert.equal(p.projectorHas('message-details-caps'), true, 'in capitals, by default');
+    await p.send('apply-settings', { ...cut, message: { details: { position: 'bottom', caps: false } } });
+    assert.equal(p.projectorHas('message-details-top'), false);
+    assert.equal(p.projectorHas('message-details-caps'), false);
+    await p.send('apply-settings', { ...cut, message: { details: { position: 'top', caps: true } } });
+    assert.equal(p.projectorHas('message-details-top'), true);
+    assert.equal(p.projectorHas('message-details-caps'), true);
+});
+
 test('notes in a message keep their brackets, and markup is shown, not run', async () => {
     p = await bootProjector({ settings: cut });
     await p.send('update-lyrics', message({ paragraphs: ['A <b>bold</b> claim & more. [Note <i>here</i>]', '[Never closed'] }));

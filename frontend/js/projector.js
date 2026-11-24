@@ -161,6 +161,11 @@ function ingestSettings(raw) {
     const m = raw.message || {};
     const pct = Number(m.fontPct);
     messageFontPct = pct >= MESSAGE_FONT_PCT.min && pct <= MESSAGE_FONT_PCT.max ? pct : MESSAGE_FONT_PCT.default;
+    // Where a message's details go, and whether in capitals: the top and
+    // capitals unless the operator has said otherwise (see projector.css).
+    const details = m.details && typeof m.details === 'object' ? m.details : {};
+    elements.projector.classList.toggle('message-details-top', details.position !== 'bottom');
+    elements.projector.classList.toggle('message-details-caps', details.caps !== false);
     messageSettings = m.separate ? {
         typography: { ...(m.typography || bibleSettings.typography) },
         background: m.background || bibleSettings.background,
@@ -261,7 +266,8 @@ function messageTextToHtml(text, marks = []) {
     return html;
 }
 
-// A message's footer: its title and code.
+// A message's details: its title, date code and place (for the book, the
+// chapter and the book's name). Drawn at the top of the screen or its foot.
 function setMessageFooter(footer) {
     elements.messageFooterText.textContent = footer || '';
     elements.songMetaBar.classList.toggle('visible', !!footer);

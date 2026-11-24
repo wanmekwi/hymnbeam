@@ -92,10 +92,12 @@ function syncTargetRow() {
     elements.messageMatchBibleBtn.classList.toggle('hidden', !onMessage || !state.settings.message.separate);
     // The logo is a shared holding slide, not a per-profile option.
     elements.setLogoGroup.classList.toggle('hidden', settingsTarget !== 'song');
-    // A message has a footer and a text size, not a song's bars and lines.
+    // A message has its details and a text size, not a song's bars and lines.
     elements.messageFontGroup.classList.toggle('hidden', !onMessage);
+    elements.messageDetailsGroup.classList.toggle('hidden', !onMessage);
+    elements.messageDetailsCapsGroup.classList.toggle('hidden', !onMessage);
     document.querySelectorAll('.song-layout-setting').forEach(el => el.classList.toggle('hidden', onMessage));
-    elements.setShowTitleBarLabel.textContent = onMessage ? 'Show the title and date code' : 'Show song title bar';
+    elements.setShowTitleBarLabel.textContent = onMessage ? 'Show the sermon details' : 'Show song title bar';
     elements.settingsContent.classList.toggle('display-locked', bibleIsLocked());
     elements.settingsContent.classList.toggle('message-locked', messageIsLocked());
 }
@@ -136,6 +138,11 @@ function mergeSettings(saved) {
             if (Number.isFinite(sm.fontPct)) {
                 out.message.fontPct = Math.min(MESSAGE_FONT_PCT.max, Math.max(MESSAGE_FONT_PCT.min, sm.fontPct));
             }
+            // Settings saved before this was offered lack it, and take the
+            // default: the top, in capitals.
+            const d = sm.details && typeof sm.details === 'object' ? sm.details : {};
+            if (d.position === 'top' || d.position === 'bottom') out.message.details.position = d.position;
+            if (typeof d.caps === 'boolean') out.message.details.caps = d.caps;
             if (sm.typography) Object.assign(out.message.typography, sm.typography);
             if (sm.background) mergeBackground(out.message.background, sm.background);
             if (sm.layout) Object.assign(out.message.layout, sm.layout);
@@ -260,6 +267,10 @@ function syncSettingsForm() {
     const fontPct = state.settings.message.fontPct;
     elements.setMessageFont.value = fontPct;
     elements.setMessageFontValue.textContent = formatMessageFontSize(fontPct);
+    const details = state.settings.message.details;
+    elements.setMessageDetailsPosition.querySelectorAll('button').forEach(b =>
+        b.classList.toggle('active', b.dataset.value === details.position));
+    elements.setMessageDetailsCaps.checked = details.caps;
 }
 
 function syncBgImageThumb() {
@@ -686,6 +697,18 @@ function initSettingsDialog() {
         const pct = parseFloat(elements.setMessageFont.value);
         state.settings.message.fontPct = pct;
         elements.setMessageFontValue.textContent = formatMessageFontSize(pct);
+        onSettingsChanged();
+    });
+    // Like the text size, the sermon details are the message display's own.
+    elements.setMessageDetailsPosition.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', () => {
+            state.settings.message.details.position = b.dataset.value;
+            syncSettingsForm();
+            onSettingsChanged();
+        });
+    });
+    elements.setMessageDetailsCaps.addEventListener('change', () => {
+        state.settings.message.details.caps = elements.setMessageDetailsCaps.checked;
         onSettingsChanged();
     });
 

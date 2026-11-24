@@ -760,6 +760,18 @@ Second verse lyrics..."></textarea>
                             <input type="range" id="setMessageFont" min="2.5" max="8" step="0.25" value="4.5">
                             <span class="form-hint">Of the screen's height. The text rolls up the screen like a page: scroll with the mouse wheel or trackpad over the paragraphs, the preview or the projector window. ↓ and ↑ roll it a line, → and ← three lines (with Shift, a screen); hold one to keep it rolling.</span>
                         </div>
+                        <div class="form-group message-own-setting hidden" id="messageDetailsGroup">
+                            <label>Sermon details</label>
+                            <div class="segmented" id="setMessageDetailsPosition">
+                                <button type="button" data-value="top" class="active">Top</button>
+                                <button type="button" data-value="bottom">Bottom</button>
+                            </div>
+                            <span class="form-hint">The title, date code and place (for the book, the chapter and the book's name), at the top or the foot of the screen.</span>
+                        </div>
+                        <div class="form-group toggle-group message-own-setting hidden" id="messageDetailsCapsGroup">
+                            <label for="setMessageDetailsCaps">Sermon details in capitals</label>
+                            <input type="checkbox" id="setMessageDetailsCaps" class="toggle" checked>
+                        </div>
                         <div class="form-group toggle-group">
                             <label for="setShowTitleBar" id="setShowTitleBarLabel">Show song title bar</label>
                             <input type="checkbox" id="setShowTitleBar" class="toggle" checked>

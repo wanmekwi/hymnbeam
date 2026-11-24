@@ -326,7 +326,7 @@ test('choosing a hit opens the message at that paragraph, and a click projects i
     await app.click(paragraphCards()[1]);
     const slide = app.onScreen();
     assert.equal(slide.mode, 'message');
-    assert.equal(slide.footer, 'Seeds In Winter · 59-0315');
+    assert.equal(slide.footer, 'Seeds In Winter · 59-0315 · Lakeside MN', 'the title, date code and place');
     assert.equal(slide.label, '', 'no paragraph number on the screen');
     assert.equal(slide.isBlank, false);
     assert.deepEqual(slide.scroll.paragraphs, [
@@ -416,7 +416,7 @@ test('the arrows move the message on screen even after another is opened', async
     await app.until(() => app.$('#messageDisplayTitle').textContent === 'Market Day', 'the next message');
     await app.press('ArrowRight');
     assert.deepEqual(top(), { paragraph: 1, offset: LINES[2] });
-    assert.equal(app.onScreen().footer, 'Lamps And Lanterns · 61-1231');
+    assert.equal(app.onScreen().footer, 'Lamps And Lanterns · 61-1231 · Hillcrest TX');
     assert.equal(live(), undefined, 'the reader shows another message');
 });
 
@@ -512,7 +512,7 @@ test('a book chapter\'s footer gives the chapter and the book', async () => {
 test('lines are measured in the message layout, at the size set, with the message\'s footer', async () => {
     await openLong({ settings: { message: { fontPct: 4 } } });
     await app.click(paragraphCards()[1]);
-    assert.deepEqual(app.measured.at(-1), { footer: 'Lamps And Lanterns · 61-1231', fontPct: 4 });
+    assert.deepEqual(app.measured.at(-1), { footer: 'Lamps And Lanterns · 61-1231 · Hillcrest TX', fontPct: 4 });
 });
 
 test('a chosen paragraph goes to the top of the screen, with the paragraphs around it', async () => {

@@ -74,12 +74,16 @@ const DEFAULT_SETTINGS = {
     },
     // The message library's display (The Message target). While `separate` is
     // false, paragraphs look exactly as scripture does, alignment included.
-    // `fontPct` applies either way: the size of the text, as a share of the
-    // screen height (see MESSAGE_FONT_PCT in message-scroll.js for its range).
+    // `fontPct` and `details` apply either way: the size of the text, as a
+    // share of the screen height (see MESSAGE_FONT_PCT in message-scroll.js
+    // for its range), and where the message's details (its title, date code
+    // and place) go, at the top or the foot of the screen, and whether in
+    // capitals.
     message: {
         separate: false,
         initialized: false,
         fontPct: MESSAGE_FONT_PCT.default,
+        details: { position: 'top', caps: true },
         typography: { fontFamily: 'Montserrat', fontWeight: 600, alignment: 'left' },
         background: {
             kind: 'solid',
@@ -272,6 +276,10 @@ const elements = {
     messageFontGroup: document.getElementById('messageFontGroup'),
     setMessageFont: document.getElementById('setMessageFont'),
     setMessageFontValue: document.getElementById('setMessageFontValue'),
+    messageDetailsGroup: document.getElementById('messageDetailsGroup'),
+    messageDetailsCapsGroup: document.getElementById('messageDetailsCapsGroup'),
+    setMessageDetailsPosition: document.getElementById('setMessageDetailsPosition'),
+    setMessageDetailsCaps: document.getElementById('setMessageDetailsCaps'),
     setShowTitleBarLabel: document.getElementById('setShowTitleBarLabel'),
     messageMeasureFrame: document.getElementById('messageMeasureFrame'),
     setDisplayTarget: document.getElementById('setDisplayTarget'),
