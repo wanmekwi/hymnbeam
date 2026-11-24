@@ -10,6 +10,7 @@ mod export;
 mod import;
 #[cfg(target_os = "macos")]
 mod macos_dock;
+mod messages;
 mod models;
 mod settings;
 mod songs;
@@ -100,6 +101,59 @@ fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+#[derive(Clone, serde::Serialize)]
+struct MessageLibraryProgress {
+    copied: u64,
+    total: u64,
+}
+
+// Asks for a message library file with a native picker and installs it. The
+// picker is opened here rather than by the page, so no file path ever comes
+// from the webview, and the file (over 100 MB) is never passed through IPC.
+// Async, with the copy on a blocking thread: the picker waits until it is
+// closed and the copy can take a while from a USB stick, and neither may
+// freeze the operator window. Progress is sent as `message-library-progress`
+// events. Returns None if the operator cancels the picker.
+#[tauri::command]
+async fn import_message_library(
+    app: tauri::AppHandle,
+) -> Result<Option<messages::Status>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_title("Import message library")
+        .add_filter("Message library", &["db"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut last_sent = 0u64;
+        messages::library()
+            .import(&path, |copied, total| {
+                // About one event per percent, plus the first and last.
+                if copied == 0 || copied == total || copied - last_sent >= total / 100 {
+                    last_sent = copied;
+                    let _ = app.emit(
+                        "message-library-progress",
+                        MessageLibraryProgress { copied, total },
+                    );
+                }
+            })
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn remove_message_library() -> Result<messages::Status, String> {
+    messages::library().remove().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -304,6 +358,12 @@ fn main() {
         // Lets the frontend relaunch the app once an update has installed
         // (installDownloadedUpdate → window.__TAURI__.process.relaunch).
         .plugin(tauri_plugin_process::init())
+        // Native file picker for importing the message library (used from Rust
+        // only; the page gets no dialog permissions). Note the plugin replaces
+        // window.alert and window.confirm in every page with versions that need
+        // those permissions, and its confirm() returns a Promise: the frontend
+        // must keep using its own dialogs (dialogs.js), never the browser's.
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_app_version,
             open_projector_window,
@@ -314,7 +374,9 @@ fn main() {
             import_selected_songs,
             set_songs_source,
             save_background_image,
-            open_external
+            open_external,
+            import_message_library,
+            remove_message_library
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
