@@ -762,6 +762,189 @@ test('with the reader on something else, the wheel over it scrolls the reader al
     assert.equal(highlighted(), '1', 'and the reader is back with the screen');
 });
 
+// ---- Highlights ----------------------------------------------------------------
+
+// Drag across the reader's text as the operator would: from `from` characters
+// into one paragraph's text to `to` characters into another's (or the same).
+const readerText = (i) => paragraphCards()[i].querySelector('.verse-card-text');
+const pointIn = (textEl, offset) => {
+    const walker = app.document.createTreeWalker(textEl, app.window.NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    for (; node && offset > node.length; node = walker.nextNode()) offset -= node.length;
+    return [node, offset];
+};
+const drag = async (fromCard, from, toCard, to) => {
+    // The mouse comes up 40 px from where it went down.
+    const fire = (el, type) => el.dispatchEvent(new app.window.MouseEvent(type,
+        { bubbles: true, cancelable: true, button: 0, clientX: type === 'mousedown' ? 100 : 140, clientY: 50 }));
+    fire(readerText(fromCard), 'mousedown');
+    const range = app.document.createRange();
+    range.setStart(...pointIn(readerText(fromCard), from));
+    range.setEnd(...pointIn(readerText(toCard), to));
+    const selection = app.window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fire(readerText(toCard), 'mouseup');
+    // A press and release on the same text is a click as well.
+    if (fromCard === toCard) fire(readerText(toCard), 'click');
+    await app.settle();
+};
+const marks = () => app.onScreen().scroll.marks;
+const readerMarks = () => [...app.document.querySelectorAll('#messageParagraphs mark.message-mark')].map(m => m.textContent);
+
+test('dragging across words of the message on screen highlights them there, and moves nothing', async () => {
+    await openLong();
+    await app.click(paragraphCards()[1]);
+    await app.press('ArrowRight');
+    const at = top();
+    const sent = app.projected().length;
+
+    await drag(1, 6, 1, 12);                       // from inside "first" to inside "lantern"
+    assert.deepEqual(marks(), [[1, 4, 17]], 'whole words: "first lantern"');
+    assert.deepEqual(readerMarks(), ['first lantern'], 'marked in the reader too');
+    assert.equal(readerText(1).textContent, LONG_TEXT, 'the reader\'s text is otherwise as it was');
+    assert.deepEqual(top(), at, 'the text on screen stays where it is');
+    assert.equal(app.onScreen().scroll.jump, false);
+    assert.equal(app.projected().length, sent + 1, 'the release is not taken for a click as well');
+    assert.equal(app.window.getSelection().isCollapsed, true, 'the selection is put away');
+    assert.equal(highlighted(), '1');
+
+    await drag(1, 19, 1, 21);                      // inside "hung", the next word
+    assert.deepEqual(marks(), [[1, 4, 22]], 'next to the first, it joins it');
+    const second = LONG_TEXT.indexOf('second');
+    await drag(1, second + 1, 1, second + 2);
+    assert.deepEqual(marks(), [[1, 4, 22], [1, second, second + 6]]);
+    assert.deepEqual(readerMarks(), ['first lantern hung', 'second']);
+
+    // The highlights go with the text as it rolls.
+    await app.press('ArrowRight');
+    assert.deepEqual(marks(), [[1, 4, 22], [1, second, second + 6]]);
+
+    // A click on one takes it off, and does not move the text.
+    const before = top();
+    await app.click(app.$('#messageParagraphs mark.message-mark'));
+    assert.deepEqual(marks(), [[1, second, second + 6]]);
+    assert.deepEqual(readerMarks(), ['second']);
+    assert.deepEqual(top(), before);
+
+    // Escape takes off what is left, before it does anything else.
+    await app.press('Escape');
+    assert.equal(marks(), undefined);
+    assert.deepEqual(readerMarks(), []);
+    assert.equal(readerText(1).textContent, LONG_TEXT);
+    assert.deepEqual(top(), before);
+});
+
+test('a drag across paragraphs highlights the part of each, and only what the projector is sent goes with it', async () => {
+    await openLong({ view: 20 });                  // two lines to a screen, so the paragraphs sent run out
+    await app.click(paragraphCards()[0]);
+    await drag(0, 6, 1, 8);                        // from "the lamps…" to the end, and "The first"
+    assert.deepEqual(marks(), [[0, 5, 38], [1, 0, 9]]);
+    assert.deepEqual(readerMarks(), ['the lamps and light the lanterns.', 'The first']);
+    for (let i = 0; i < 6; i++) await app.press('ArrowRight');
+    assert.equal(app.onScreen().scroll.first, 1, 'the first paragraph is no longer sent');
+    assert.deepEqual(marks(), [[1, 0, 9]], 'nor its highlight');
+    await app.click(paragraphCards()[0]);
+    assert.deepEqual(marks(), [[0, 5, 38], [1, 0, 9]], 'which is back when the paragraph is');
+});
+
+test('a drag the webview leaves unselected still highlights, from where the mouse went down to where it came up', async () => {
+    await openLong();
+    await app.click(paragraphCards()[1]);
+    const at = top();
+    const sent = app.projected().length;
+    // The webview says where in the text a point is: here, x is the offset.
+    app.document.caretRangeFromPoint = (x) => {
+        const range = app.document.createRange();
+        range.setStart(...pointIn(readerText(1), x));
+        return range;
+    };
+    const fire = (type, x) => readerText(1).dispatchEvent(
+        new app.window.MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: 0, button: 0 }));
+    fire('mousedown', 12);
+    fire('mouseup', 6);                             // dragged backwards, from "lantern" to "first"
+    fire('click', 6);
+    await app.settle();
+    assert.deepEqual(marks(), [[1, 4, 17]]);
+    assert.deepEqual(top(), at, 'and the release is not a click');
+    assert.equal(app.projected().length, sent + 1);
+
+    // A press and release in one spot is a click, as ever.
+    fire('mousedown', 150);
+    fire('mouseup', 152);
+    fire('click', 152);
+    await app.settle();
+    assert.deepEqual(top(), { paragraph: 1, offset: LINES[4] }, 'it projects from the line clicked');
+    delete app.document.caretRangeFromPoint;
+});
+
+test('a plain click never highlights, whatever is selected; a double click on a word does', async () => {
+    await openLong();
+    await app.click(paragraphCards()[1]);
+    const fire = (type, init = {}) => readerText(1).dispatchEvent(
+        new app.window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: 100, clientY: 50, ...init }));
+    const select = (from, to) => {
+        const range = app.document.createRange();
+        range.setStart(...pointIn(readerText(1), from));
+        range.setEnd(...pointIn(readerText(1), to));
+        app.window.getSelection().removeAllRanges();
+        app.window.getSelection().addRange(range);
+    };
+    // Text selected some other way (Select All, say), then a click inside it.
+    select(0, 60);
+    fire('mousedown', { detail: 1 });
+    fire('mouseup', { detail: 1 });
+    fire('click', { detail: 1 });
+    await app.settle();
+    assert.equal(marks(), undefined, 'nothing is highlighted');
+    assert.deepEqual(readerMarks(), []);
+    assert.equal(app.onScreen().scroll.jump, true, 'it is a click, and projects from its line');
+
+    // The second click of a double click selects its word, and that is highlighted.
+    fire('mousedown', { detail: 2 });
+    select(10, 17);
+    fire('mouseup', { detail: 2 });
+    fire('click', { detail: 2 });
+    await app.settle();
+    assert.deepEqual(marks(), [[1, 10, 17]]);
+    assert.deepEqual(readerMarks(), ['lantern']);
+});
+
+test('highlights come back after a blank, and Escape takes them off', async () => {
+    await openLong();
+    await app.click(paragraphCards()[1]);
+    await drag(1, 6, 1, 12);
+    await app.click('#blankBtn');
+    await app.click('#blankBtn');
+    assert.deepEqual(marks(), [[1, 4, 17]], 'blanking keeps them');
+    await app.press('Escape');
+    assert.equal(marks(), undefined, 'with the message on screen, Escape takes them off');
+});
+
+test('highlights are for the message on screen: none before it is shown, and gone when another is', async () => {
+    await openLong();
+    await drag(1, 6, 1, 12);
+    assert.deepEqual(readerMarks(), [], 'nothing on screen, nothing to highlight');
+    assert.equal(app.projected().length, 0, 'and a drag is never a click: nothing is projected');
+    assert.equal(app.window.getSelection().isCollapsed, true, 'nor is anything left selected');
+
+    await app.click(paragraphCards()[1]);
+    await drag(1, 6, 1, 12);
+    assert.deepEqual(marks(), [[1, 4, 17]]);
+    await typeQuery('59-0315');
+    await app.until(() => paragraphCards().length === 2, 'another message');
+    const sent = app.projected().length;
+    await drag(0, 2, 0, 6);
+    assert.deepEqual(readerMarks(), [], 'the reader\'s message is not the one on screen');
+    assert.equal(app.projected().length, sent, 'and nothing is sent');
+    await app.click(paragraphCards()[0]);
+    assert.equal(app.onScreen().songId, 'message-59-0315');
+    assert.equal(marks(), undefined, 'the other message\'s highlights do not come with it');
+    await typeQuery('61-1231');
+    await app.until(() => paragraphCards().length === 3, 'the first message again');
+    assert.deepEqual(readerMarks(), [], 'its highlights went when the other was shown');
+});
+
 test('the projector window passes on the wheel and the keys, as if they were the operator\'s', async () => {
     await openLong();
     await app.click(paragraphCards()[0]);

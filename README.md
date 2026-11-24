@@ -102,7 +102,8 @@ without leaving the app. On Windows, `⌘` below is `Ctrl`.
 | `.` / `,` | Same, without reaching for the page keys |
 | `Space` | Blank / unblank screen |
 | `L` | Show / hide logo slide |
-| `Escape` | Close dialog, clear alert, or clear display — in that order |
+| Drag across words | In the reader, on the message on screen: highlight those words on the projector. Click a highlight to take it off |
+| `Escape` | Close dialog, clear alert, take off a message's highlights, or clear display — in that order |
 
 **Projector**
 

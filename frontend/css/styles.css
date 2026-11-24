@@ -2978,6 +2978,17 @@ button.message-show-all:hover {
 .message-paragraph .verse-card-text {
     white-space: normal;
     line-height: 1.6;
+    /* Dragged across, words are highlighted on screen (see messages.js). */
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+/* Words highlighted on screen; a click takes the highlight off. */
+.message-paragraph mark.message-mark {
+    background-color: rgba(255, 196, 37, 0.3);
+    color: inherit;
+    border-radius: 3px;
+    cursor: pointer;
 }
 
 /* Ready for Enter (the search hit it was opened at, or moved with ↑ / ↓). */

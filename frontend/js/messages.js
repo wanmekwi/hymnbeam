@@ -40,6 +40,7 @@ const messageState = {
     highlighted: null,    // the reader's paragraph ready for Enter, as an index
     hitTarget: null,      // {paragraphId, snippet} of the search result the reader was opened at
     live: null,           // the message on screen: see showMessagePlace
+    marks: null,          // words highlighted on screen: {code, at: Map(paragraph index → [[from, to], …])}
     busy: false,          // the import picker or a copy is running
     importPercent: null,
     importError: null,
@@ -552,7 +553,7 @@ function renderMessageReader() {
     grid.innerHTML = m.paragraphs.map((p, i) => `
         <div class="verse-card bible-verse-card message-paragraph" data-index="${i}">
             <span class="bible-verse-num">${escapeHtml(p.number ?? '')}</span>
-            <span class="verse-card-text">${escapeHtml(p.text)}</span>
+            <span class="verse-card-text">${messageMarkedHtml(p.text, messageMarksOf(m.work.code, i))}</span>
         </div>`).join('');
     markMessageParagraphs();
 }
@@ -662,7 +663,8 @@ function messageLayout(work, paragraphs) {
 // and the place to show at the top of the screen. `jump` asks it to fade to
 // the place as to a new slide, rather than glide there; `close`, to keep close
 // behind a stream of moves (a turning wheel) rather than glide at its ease.
-function messageSlidePayload(work, paragraphs, win, anchor, jump, close = false) {
+// `marks` are the highlights in those paragraphs: [paragraph, from, to].
+function messageSlidePayload(work, paragraphs, win, anchor, { jump = false, close = false, marks = [] } = {}) {
     const scroll = {
         first: win.first,
         paragraphs: paragraphs.slice(win.first, win.last + 1).map(p => p.text),
@@ -671,6 +673,7 @@ function messageSlidePayload(work, paragraphs, win, anchor, jump, close = false)
         jump,
     };
     if (close) scroll.close = true;
+    if (marks.length) scroll.marks = marks;
     return {
         mode: 'message',
         scroll,
@@ -702,6 +705,8 @@ function messageSlidePayload(work, paragraphs, win, anchor, jump, close = false)
 function showMessagePlace(work, paragraphs, place,
     { jump = false, keepBlank = false, followReader = true, highlight = null, part = 0, roll = false, close = false } = {}) {
     if (!paragraphs.length) return;
+    // Highlights are for the message on screen, and go when another takes its place.
+    if (messageState.marks && messageState.marks.code !== work.code) dropMessageMarks();
     const layout = messageLayout(work, paragraphs);
     // Clamped to the message's ends, where the text rests on a whole line.
     const { place: top, part: partOn } = messageMovePart(layout, messageClampTop(layout, place), part, 0);
@@ -720,7 +725,8 @@ function showMessagePlace(work, paragraphs, place,
     if (rollReader) holdMessageReader(layout);
     messageState.live = { work, paragraphs, place: top, part: partOn, offset: anchor.offset, shown, window: win, screen };
     if (inReader) messageState.highlighted = highlight ?? top.paragraph;
-    sendSlideToProjector('message', messageSlidePayload(work, paragraphs, win, anchor, jump, close),
+    const marks = messageWindowMarks(work.code, win);
+    sendSlideToProjector('message', messageSlidePayload(work, paragraphs, win, anchor, { jump, close, marks }),
         elements.messagePreviewFrame, { keepBlank });
     const sameMarks = sameScreen && highlight == null && prev.screen.first === screen.first;
     if (!sameMarks) markMessageParagraphs();
@@ -934,6 +940,190 @@ function onProjectorInput(payload) {
     }
 }
 
+// ---- Highlights ---------------------------------------------------------------
+//
+// Words of the message on screen can be highlighted there: the operator drags
+// across them in the reader. A highlight is kept as offsets in its paragraph's
+// text, whole words at a time; it stays while that message is the one on
+// screen, wherever the text is rolled to, until it is clicked (in the reader)
+// or Escape takes them all off.
+
+function messageMarksOf(code, index) {
+    const marks = messageState.marks;
+    return (marks && marks.code === code && marks.at.get(index)) || [];
+}
+
+// The highlights in the paragraphs the projector is sent: [paragraph, from, to].
+function messageWindowMarks(code, win) {
+    const marks = messageState.marks;
+    if (!marks || marks.code !== code) return [];
+    const out = [];
+    for (const index of [...marks.at.keys()].sort((a, b) => a - b)) {
+        if (index < win.first || index > win.last) continue;
+        for (const [from, to] of marks.at.get(index)) out.push([index, from, to]);
+    }
+    return out;
+}
+
+// A paragraph's text for the reader, with its highlights marked.
+function messageMarkedHtml(text, marks) {
+    let html = '';
+    let at = 0;
+    for (const [from, to] of marks) {
+        html += `${escapeHtml(text.slice(at, from))}<mark class="message-mark" title="Click to take this highlight off the screen">${escapeHtml(text.slice(from, to))}</mark>`;
+        at = to;
+    }
+    return html + escapeHtml(text.slice(at));
+}
+
+// From `from` to `to` in the text, taken out to whole words; null if no word is touched.
+function messageWordSpan(text, from, to) {
+    let a = Math.max(0, Math.min(text.length, from));
+    let b = Math.max(0, Math.min(text.length, to));
+    while (a < b && /\s/.test(text[a])) a++;
+    while (b > a && /\s/.test(text[b - 1])) b--;
+    if (a >= b) return null;
+    while (a > 0 && !/\s/.test(text[a - 1])) a--;
+    while (b < text.length && !/\s/.test(text[b])) b++;
+    return [a, b];
+}
+
+function messageLiveInReader() {
+    const live = messageState.live;
+    return state.liveSlide?.kind === 'message' && !!live && messageReaderShown()
+        && messageState.message.work.code === live.work.code;
+}
+
+// How far into a reader paragraph's text a place in it (as a selection gives it) is.
+function messageTextOffset(textEl, node, offset) {
+    const range = document.createRange();
+    range.selectNodeContents(textEl);
+    range.setEnd(node, offset);
+    return range.toString().length;
+}
+
+// Add a highlight to a paragraph, joined to any it overlaps or stands next to.
+function addMessageMark(code, index, text, span) {
+    if (messageState.marks?.code !== code) messageState.marks = { code, at: new Map() };
+    const all = [...(messageState.marks.at.get(index) || []), span].sort((a, b) => a[0] - b[0]);
+    const joined = [];
+    for (const mark of all) {
+        const last = joined[joined.length - 1];
+        if (last && !text.slice(last[1], Math.max(last[1], mark[0])).trim()) last[1] = Math.max(last[1], mark[1]);
+        else joined.push([mark[0], mark[1]]);
+    }
+    messageState.marks.at.set(index, joined);
+}
+
+// The highlights of these paragraphs changed: show it in the reader and on screen.
+function messageMarksChanged(code, indices) {
+    const m = messageState.message;
+    if (m && m.work.code === code) {
+        for (const index of indices) {
+            const textEl = messageEl('messageParagraphs')
+                .querySelector(`.message-paragraph[data-index="${index}"] .verse-card-text`);
+            if (textEl && m.paragraphs[index]) {
+                textEl.innerHTML = messageMarkedHtml(m.paragraphs[index].text, messageMarksOf(code, index));
+            }
+        }
+    }
+    const live = messageState.live;
+    if (state.liveSlide?.kind === 'message' && live && live.work.code === code) {
+        const layout = messageLayout(live.work, live.paragraphs);
+        showMessagePlace(live.work, live.paragraphs, messagePlaceAt(layout, live.place.paragraph, live.offset),
+            { keepBlank: true, followReader: false, part: live.part });
+    }
+}
+
+// Forget the highlights, in the reader too; the screen is the caller's to see to.
+function dropMessageMarks() {
+    const marks = messageState.marks;
+    if (!marks) return null;
+    messageState.marks = null;
+    const m = messageState.message;
+    if (m && m.work.code === marks.code) {
+        for (const mark of messageEl('messageParagraphs').querySelectorAll('mark.message-mark')) {
+            const textEl = mark.closest('.verse-card-text');
+            const index = Number(mark.closest('.message-paragraph')?.dataset.index);
+            if (textEl && m.paragraphs[index]) textEl.textContent = m.paragraphs[index].text;
+        }
+    }
+    return marks;
+}
+
+// Escape: take every highlight off. False if there were none.
+function clearMessageMarks() {
+    const marks = dropMessageMarks();
+    if (!marks || !marks.at.size) return false;
+    messageMarksChanged(marks.code, []);
+    return true;
+}
+
+// The operator has dragged across words in the reader: highlight them, if the
+// reader's message is the one on screen. False if nothing was highlighted.
+//
+// What was dragged across is what the webview has selected, or failing that
+// (a webview may leave a drag unselected) what lies between where the mouse
+// went down and where it came up: `from` and `to`, each {index, offset}.
+function markMessageSelection(from = null, to = null) {
+    if (!messageLiveInReader()) return false;
+    const selection = window.getSelection ? window.getSelection() : null;
+    const range = selection && !selection.isCollapsed && selection.rangeCount ? selection.getRangeAt(0) : null;
+    const { work, paragraphs } = messageState.message;
+    const spans = [];   // [index, from, to] as dragged, before being taken out to whole words
+    if (range) {
+        for (const card of messageEl('messageParagraphs').querySelectorAll('.message-paragraph')) {
+            const textEl = card.querySelector('.verse-card-text');
+            if (!textEl || !range.intersectsNode(textEl)) continue;
+            const index = Number(card.dataset.index);
+            spans.push([index,
+                textEl.contains(range.startContainer) ? messageTextOffset(textEl, range.startContainer, range.startOffset) : 0,
+                textEl.contains(range.endContainer) ? messageTextOffset(textEl, range.endContainer, range.endOffset)
+                    : (paragraphs[index]?.text ?? '').length]);
+        }
+    } else if (from && to && from.offset != null && to.offset != null) {
+        const [a, b] = from.index < to.index || (from.index === to.index && from.offset <= to.offset) ? [from, to] : [to, from];
+        for (let index = a.index; index <= b.index; index++) {
+            spans.push([index, index === a.index ? a.offset : 0,
+                index === b.index ? b.offset : (paragraphs[index]?.text ?? '').length]);
+        }
+    }
+    const touched = [];
+    for (const [index, start, end] of spans) {
+        const text = paragraphs[index]?.text ?? '';
+        const span = messageWordSpan(text, start, end);
+        if (!span) continue;
+        addMessageMark(work.code, index, text, span);
+        touched.push(index);
+    }
+    if (!touched.length) return false;
+    if (selection) selection.removeAllRanges();
+    messageMarksChanged(work.code, touched);
+    return true;
+}
+
+// Where in the reader a mouse event is: its paragraph and how far into its
+// text ({index, offset}; the offset null off the text), or null off any paragraph.
+function messageReaderPoint(e) {
+    const card = e.target.closest ? e.target.closest('.message-paragraph') : null;
+    return card ? { index: Number(card.dataset.index), offset: messageClickOffset(e, card) } : null;
+}
+
+// A click on a highlight in the reader takes it off. False if `el` is not one.
+function removeMessageMark(el) {
+    const mark = el.closest ? el.closest('mark.message-mark') : null;
+    const textEl = mark?.closest('.verse-card-text');
+    const m = messageState.message;
+    if (!mark || !textEl || !m || messageState.marks?.code !== m.work.code) return false;
+    const index = Number(mark.closest('.message-paragraph').dataset.index);
+    const from = messageTextOffset(textEl, mark, 0);
+    const list = (messageState.marks.at.get(index) || []).filter(([a]) => a !== from);
+    if (list.length) messageState.marks.at.set(index, list);
+    else messageState.marks.at.delete(index);
+    messageMarksChanged(m.work.code, [index]);
+    return true;
+}
+
 // Where in a paragraph's text a click in the reader landed, or null if not
 // on its text (or the webview cannot say).
 function messageClickOffset(e, card) {
@@ -1075,10 +1265,43 @@ function initMessageListeners() {
         else if (e.target.closest('#messageRemoveBtn')) confirmRemoveMessageLibrary();
     });
 
-    // A click projects from the line clicked.
+    // A click projects from the line clicked. A drag across words of the
+    // message on screen highlights them instead, and a click on a highlight
+    // takes it off.
+    // A press and release more than a few px apart is a drag, and never a click.
+    const DRAG_PX = 4;
+    let pressed = null;     // where the mouse went down in the reader: {x, y, at}
+    let dragged = false;    // the release just made was a drag's
+    messageEl('messageParagraphs').addEventListener('mousedown', (e) => {
+        dragged = false;
+        pressed = e.button === 0 ? { x: e.clientX, y: e.clientY, at: messageReaderPoint(e) } : null;
+    });
+    document.addEventListener('mouseup', (e) => {
+        const from = pressed;
+        pressed = null;
+        if (!from) return;
+        const moved = Math.hypot(e.clientX - from.x, e.clientY - from.y) > DRAG_PX;
+        // A selection is the operator's doing only if this press made it: by
+        // dragging, by a double click on a word, or with Shift. One left over
+        // from before (Select All, say) must not turn a plain click into a
+        // highlight.
+        if (!moved && e.detail < 2 && !e.shiftKey) return;
+        dragged = markMessageSelection(from.at, moved ? messageReaderPoint(e) : null) || moved;
+        if (!dragged) return;
+        // A drag that highlighted nothing leaves nothing selected either.
+        const selection = window.getSelection ? window.getSelection() : null;
+        if (selection && !selection.isCollapsed) selection.removeAllRanges();
+        // Only the click that this release itself makes is the drag's.
+        setTimeout(() => { dragged = false; }, 0);
+    });
     messageEl('messageParagraphs').addEventListener('click', (e) => {
+        if (dragged) {
+            dragged = false;
+            return;
+        }
         const card = e.target.closest('.message-paragraph');
         if (!card || !messageState.message) return;
+        if (removeMessageMark(e.target)) return;
         projectFromReader(Number(card.dataset.index), messageClickOffset(e, card));
     });
 

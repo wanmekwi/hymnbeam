@@ -532,6 +532,52 @@ test('the projector window tells the operator its size; a preview does not', asy
     assert.deepEqual(p.emitted, []);
 });
 
+test('highlighted words are marked where they stand, and the text is otherwise as it was', async () => {
+    p = await bootProjector({ settings: cut });
+    // LAMPS[0]: "The first lamp was lit. [The listeners say amen.]": "lamp was" is 10–18, the note starts at 24.
+    await p.send('update-lyrics', message({ marks: [[10, 10, 18], [10, 19, 28], [11, 0, 3]] }));
+    assert.deepEqual(paragraphsShown(), [
+        'The first <mark class="message-mark">lamp was</mark> ' +
+            '<mark class="message-mark">lit. </mark><mark class="message-mark"><span class="message-note">[The</span></mark>' +
+            '<span class="message-note"> listeners say amen.]</span>',
+        '<mark class="message-mark">The</mark> second lamp was lit.',
+    ]);
+    assert.deepEqual([...column().children].map(e => e.textContent), LAMPS, 'not a character is added or lost');
+});
+
+test('a change of highlights is drawn in place: nothing else is redrawn, and only the new one fades in', async () => {
+    p = await bootProjector({ settings: cut });
+    await p.send('update-lyrics', message({ marks: [[10, 4, 9]] }));
+    const [first, second] = column().children;
+    assert.equal(first.querySelector('mark').className, 'message-mark', 'drawn with the slide, it does not fade in on its own');
+
+    await p.send('update-lyrics', message({ marks: [[10, 4, 9], [11, 4, 10]], jump: false }));
+    assert.equal(column().children[0], first, 'the same paragraphs, not drawn afresh');
+    assert.equal(column().children[1], second);
+    assert.equal(first.querySelector('mark').className, 'message-mark', 'the highlight already there is left alone');
+    assert.equal(second.innerHTML, 'The <mark class="message-mark fresh">second</mark> lamp was lit.');
+
+    await p.send('update-lyrics', message({ marks: [[10, 4, 9], [10, 15, 18], [11, 4, 10]], jump: false }));
+    assert.deepEqual([...first.querySelectorAll('mark')].map(m => [m.textContent, m.classList.contains('fresh')]),
+        [['first', false], ['was', true]]);
+
+    await p.send('update-lyrics', message({ jump: false }));
+    assert.equal(column().querySelector('mark'), null, 'taken off');
+    assert.deepEqual(paragraphsShown(), [
+        'The first lamp was lit. <span class="message-note">[The listeners say amen.]</span>',
+        'The second lamp was lit.',
+    ]);
+});
+
+test('highlights that make no sense are ignored', async () => {
+    p = await bootProjector({ settings: cut });
+    await p.send('update-lyrics', message({ marks: [[10, 9, 4], [10, 'a', 3], null, [10], [99, 0, 5], [11, 20, 500]] }));
+    assert.deepEqual(paragraphsShown(), [
+        'The first lamp was lit. <span class="message-note">[The listeners say amen.]</span>',
+        'The second lamp was <mark class="message-mark">lit.</mark>',
+    ]);
+});
+
 test('the projector window passes the wheel and the keys on to the operator', async () => {
     p = await bootProjector({ settings: cut });
     const inputs = () => p.emitted.filter(e => e.name === 'projector-input').map(e => e.payload);

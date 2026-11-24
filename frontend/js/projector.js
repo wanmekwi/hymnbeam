@@ -218,25 +218,45 @@ function bibleTextPlain(text) {
 // amen.]") keep their brackets, unlike scripture's supplied words, and are set
 // quieter than the words spoken. A '[' never closed is a note to the end of
 // the paragraph, and a ']' never opened one from its start.
-function messageTextToHtml(text) {
+//
+// `marks` are the operator's highlights in this paragraph: [from, to, fresh]
+// as offsets in the text, `fresh` for one just made, which fades in. A
+// highlight is colour behind the words and nothing else, so the lines break
+// exactly as without it.
+function messageTextToHtml(text, marks = []) {
     const t = String(text);
-    const note = (part) => `<span class="message-note">${escapeHtml(part)}</span>`;
-    let html = '';
+    const notes = [];
     let i = 0;
     const firstClose = t.indexOf(']');
     const firstOpen = t.indexOf('[');
     if (firstClose >= 0 && (firstOpen < 0 || firstClose < firstOpen)) {
-        html += note(t.slice(0, firstClose + 1));
+        notes.push([0, firstClose + 1]);
         i = firstClose + 1;
     }
     while (i < t.length) {
         const open = t.indexOf('[', i);
-        if (open < 0) { html += escapeHtml(t.slice(i)); break; }
-        html += escapeHtml(t.slice(i, open));
+        if (open < 0) break;
         const close = t.indexOf(']', open);
         const end = close < 0 ? t.length : close + 1;
-        html += note(t.slice(open, end));
+        notes.push([open, end]);
         i = end;
+    }
+    const within = (ranges, from, to) => ranges.find(([a, b]) => from >= a && to <= b);
+    const cuts = new Set([0, t.length]);
+    for (const [from, to] of [...notes, ...marks]) {
+        cuts.add(Math.max(0, Math.min(t.length, from)));
+        cuts.add(Math.max(0, Math.min(t.length, to)));
+    }
+    const points = [...cuts].sort((x, y) => x - y);
+    let html = '';
+    for (let k = 0; k + 1 < points.length; k++) {
+        const from = points[k];
+        const to = points[k + 1];
+        let piece = escapeHtml(t.slice(from, to));
+        if (within(notes, from, to)) piece = `<span class="message-note">${piece}</span>`;
+        const mark = within(marks, from, to);
+        if (mark) piece = `<mark class="message-mark${mark[2] ? ' fresh' : ''}">${piece}</mark>`;
+        html += piece;
     }
     return html;
 }
@@ -645,7 +665,7 @@ function applySongFontSize() {
 const MESSAGE_GLIDE_FALLBACK_GAP_EM = 0.5;   // matches .message-para + .message-para
 
 let messageFontPct = MESSAGE_FONT_PCT.default;
-let messageView = null;        // what the column shows: {songId, first, count, anchor, starts}
+let messageView = null;        // what the column shows: {songId, first, count, anchor, starts, texts, marks}
 let messageSwapTarget = null;  // what a fade under way draws when it swaps
 
 function messageColumn() {
@@ -657,15 +677,42 @@ function messageColumn() {
 // it is no part of the text, so lines break and are counted as without it.
 function drawMessageColumn(target) {
     const numbers = target.numbers || [];
+    const marks = target.marks || [];
     elements.lyricsText.innerHTML = `<div class="message-column">${target.paragraphs.map((text, i) => {
         const number = numbers[i] == null || numbers[i] === '' ? '' : ` data-number="${escapeHtml(String(numbers[i]))}"`;
-        return `<p class="message-para"${number}>${text.trim() ? messageTextToHtml(text) : '&nbsp;'}</p>`;
+        const html = text.trim() ? messageTextToHtml(text, messageMarksIn(marks, target.first + i)) : '&nbsp;';
+        return `<p class="message-para"${number}>${html}</p>`;
     }).join('')}</div>`;
     messageColumn().style.fontSize = `${messageFontPct}vh`;
     messageView = {
         songId: target.songId, first: target.first, count: target.paragraphs.length,
-        anchor: target.anchor, starts: new Map(),
+        anchor: target.anchor, starts: new Map(), texts: target.paragraphs, marks,
     };
+}
+
+// The operator's highlights: [paragraph, from, to], the paragraph counted from
+// the start of the message. Those in one paragraph, as messageTextToHtml
+// takes them; `had` (keys of the marks drawn before) tells which are fresh.
+const messageMarkKey = (mark) => mark.join(':');
+function messageMarksIn(marks, paragraph, had = null) {
+    return marks.filter(m => m[0] === paragraph).map(m => [m[1], m[2], !!had && !had.has(messageMarkKey(m))]);
+}
+
+// The highlights changed and the paragraphs drawn did not: draw them where
+// they are. No line moves, so the text stays as it is on screen.
+function redrawMessageMarks(marks) {
+    const column = messageColumn();
+    const v = messageView;
+    const had = new Set(v.marks.map(messageMarkKey));
+    for (let i = 0; i < v.count; i++) {
+        const now = messageMarksIn(marks, v.first + i, had);
+        const was = messageMarksIn(v.marks, v.first + i);
+        if (JSON.stringify(now.map(m => [m[0], m[1]])) === JSON.stringify(was.map(m => [m[0], m[1]]))) continue;
+        const text = v.texts[i];
+        if (text.trim()) column.children[i].innerHTML = messageTextToHtml(text, now);
+        v.starts.delete(i);
+    }
+    v.marks = marks;
 }
 
 // The column's measurements as laid out now (see message-scroll.js), or null
@@ -900,6 +947,8 @@ function scrollMessageTo(target) {
         // `after.lineTop` down the new one.
         messageMotion.y += before.lineTop - after.lineTop;
         drawMessageMotion();
+    } else if (JSON.stringify(target.marks) !== JSON.stringify(v.marks)) {
+        redrawMessageMarks(target.marks);
     }
     messageView.anchor = target.anchor;
     placeMessage(true);
@@ -913,6 +962,9 @@ function showMessage(data) {
         first,
         paragraphs: Array.isArray(s.paragraphs) ? s.paragraphs.map(String) : [],
         numbers: Array.isArray(s.numbers) ? s.numbers : [],
+        marks: (Array.isArray(s.marks) ? s.marks : [])
+            .filter(m => Array.isArray(m) && m.length >= 3 && m.slice(0, 3).every(Number.isFinite) && m[1] < m[2])
+            .map(m => [m[0], m[1], m[2]]),
         anchor: {
             paragraph: Number(s.anchor && s.anchor.paragraph != null ? s.anchor.paragraph : first),
             offset: Number(s.anchor && s.anchor.offset) || 0,

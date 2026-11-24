@@ -498,6 +498,28 @@ body {
     visibility: hidden;
 }
 
+/* Words the operator has highlighted: colour behind them, as a highlighter
+ * pen leaves, in the text's own colour. It must take no room (no padding or
+ * border), so that lines break exactly as without it; the little it spreads
+ * past the words is a shadow. One just made fades in. */
+.projector.message-mode .lyrics-text .message-mark {
+    --mark: var(--message-mark, rgba(255, 196, 37, 0.4));
+    background-color: var(--mark);
+    box-shadow: 0 0 0 0.07em var(--mark);
+    border-radius: 0.1em;
+    color: inherit;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+}
+
+.projector.message-mode .lyrics-text .message-mark.fresh {
+    animation: message-mark-in 0.3s ease-out;
+}
+
+@keyframes message-mark-in {
+    from { background-color: transparent; box-shadow: 0 0 0 0.07em transparent; }
+}
+
 /* Notes in the text, such as [The listeners say amen.], shown as written
  * but quieter than the words spoken. */
 .projector.message-mode .lyrics-text .message-note {
