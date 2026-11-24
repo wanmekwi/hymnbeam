@@ -72,6 +72,22 @@ test('blanking hides everything, and un-blanking brings the same slide back', as
     await p.send('update-lyrics', slide());
     assert.equal(p.has('blankScreen', 'active'), false);
     assert.equal(p.text(), 'Amazing grace, how sweet the sound');
+    assert.equal(p.has('songTitleBar', 'visible'), true, 'the title comes back too');
+    assert.equal(p.has('songMetaBar', 'visible'), true);
+    assert.equal(el('titleColNumber').textContent, 'No.12');
+    assert.equal(p.has('verseNavDown', 'visible'), true);
+});
+
+test('un-blanking scripture brings back its reference', async () => {
+    p = await bootProjector({ settings: cut });
+    await p.send('update-lyrics', verse());
+    await p.send('update-lyrics', verse({ text: '', isBlank: true }));
+    assert.equal(p.has('songTitleBar', 'visible'), false);
+
+    await p.send('update-lyrics', verse());
+    assert.equal(p.has('songTitleBar', 'visible'), true);
+    assert.match(el('songTitleBar').textContent, /Psalms 23:1/);
+    assert.equal(p.has('songMetaBar', 'visible'), false, 'scripture still has no meta bar');
 });
 
 test('with a fade, the new text appears part-way through the transition', async () => {

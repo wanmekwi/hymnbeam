@@ -337,10 +337,12 @@ function updateDisplay(data) {
             hasPrev, hasNext, isBible } = data;
 
     if (isBlank) {
-        // Drop any in-flight swap and forget the current slide so un-blanking
-        // to the same text still re-renders.
+        // Drop any in-flight swap and forget the current slide, so un-blanking
+        // to the same slide redraws all of it: the text, and the title and meta
+        // bars hidden below, which are only drawn when the slide changes.
         if (pendingSwapTimer) { clearTimeout(pendingSwapTimer); pendingSwapTimer = null; }
         currentText = '';
+        currentSongId = null;
         elements.blankScreen.classList.add('active');
         elements.songTitleBar.classList.remove('visible');
         elements.songMetaBar.classList.remove('visible');
