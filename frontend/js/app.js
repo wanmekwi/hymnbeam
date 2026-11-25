@@ -441,6 +441,17 @@ function initEventListeners() {
         if (id) await addCurrentPassageToCollection(id);
     });
 
+    // Add the place in the message reader to a collection, as a prepared quote
+    document.getElementById('messageAddToCollectionBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleMessageCollectionPicker();
+    });
+    document.getElementById('messageCollectionPickerNew')?.addEventListener('click', async () => {
+        document.getElementById('messageCollectionPicker').classList.remove('open');
+        const id = await createCollection('New Collection');
+        if (id) await addMessageQuoteToCollection(id);
+    });
+
     // Close pickers when clicking outside
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.add-to-collection-wrapper')) {
@@ -497,6 +508,14 @@ function initEventListeners() {
         if (btn) {
             e.stopPropagation();
             addCurrentPassageToCollection(parseInt(btn.dataset.id));
+        }
+    });
+
+    document.getElementById('messageCollectionPickerList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.collection-picker-item');
+        if (btn) {
+            e.stopPropagation();
+            addMessageQuoteToCollection(parseInt(btn.dataset.id));
         }
     });
 }

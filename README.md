@@ -63,7 +63,7 @@ Windows installers ship with releases from **v0.1.5** onwards.
 - **Multi-monitor routing** — automatically sends the projector window to a secondary display.
 - **KJV Bible integration** — browse books, chapters, and verses; project any passage with the same keyboard-first workflow as songs. Translator-added words shown in italics.
 - **Reference lookup** — type any common abbreviation or variation (`Ecc 9:11`, `ec 9 11`, `ecclesiastes 9:11`) and HymnBeam resolves it to the right verse.
-- **Order of service** — build a collection from songs, Bible passages, and logo slides in one ordered list, then drive the whole service through it with a single keystroke.
+- **Order of service** — build a collection from songs, Bible passages, logo slides and, with a message library installed, prepared quotes (a place in a message, with its highlights, added from the reader) in one ordered list, then drive the whole service through it with a single keystroke.
 - **Next-slide preview** — the operator always sees what the next advance will project, alongside what's on screen now.
 - **Logo / holding slide** — show the church logo (or a plain themed slide) for pre-service and transitions, separate from blanking.
 - **Announcement banner** — flash a one-line alert (e.g. a nursery call) over whatever is projected, with optional auto-clear.
@@ -127,7 +127,7 @@ without leaving the app. On Windows, `⌘` below is `Ctrl`.
 | Key | Action |
 |-----|--------|
 | `/` | Search the song library |
-| `⌃1` / `⌃2` / `⌃3` / `⌃4` | Library / Collections / Bible / message tab |
+| `⌃1` / `⌃2` / `⌃3` / `⌃4` | Library / Collections / Bible / message tab (shown once a message library is imported under Settings → Library) |
 | `[` / `]` | Previous / next sidebar tab |
 | `?` | Show the shortcut list |
 

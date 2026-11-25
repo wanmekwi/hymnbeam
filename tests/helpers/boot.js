@@ -179,6 +179,13 @@ function makeBackend(options) {
             const entry = { id: db.nextId++, item_type: body.item_type || 'song', position: c.songs.length };
             if (entry.item_type === 'bible') Object.assign(entry, { reference: body.reference, title: body.reference });
             else if (entry.item_type === 'logo') entry.title = 'Logo slide';
+            else if (entry.item_type === 'message') {
+                // As the real route does: a reference naming a message, titled by its code and paragraph number.
+                let quote = null;
+                try { quote = JSON.parse(body.reference); } catch { quote = null; }
+                if (!quote || typeof quote.code !== 'string' || !quote.code.trim()) return json({ error: 'bad reference' }, 400);
+                Object.assign(entry, { reference: body.reference, title: Number.isInteger(quote.n) ? `${quote.code} ¶${quote.n}` : quote.code });
+            }
             else {
                 const song = db.songs.find(s => s.id === body.song_id);
                 if (!song) return json({ error: 'no such song' }, 404);

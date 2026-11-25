@@ -80,7 +80,7 @@ const SHORTCUT_GROUPS = [
         title: 'Getting around',
         items: [
             { keys: ['/'], action: 'Search the song library', literalSlash: true },
-            { keys: ['{ctrl}1', '/', '{ctrl}2', '/', '{ctrl}3', '/', '{ctrl}4'], action: 'Library / Collections / Bible / message tab' },
+            { keys: ['{ctrl}1', '/', '{ctrl}2', '/', '{ctrl}3', '/', '{ctrl}4'], action: 'Library / Collections / Bible / message tab (once a message library is imported)' },
             { keys: ['[', '/', ']'], action: 'Previous / next sidebar tab' },
             { keys: ['?'], action: 'Show this list' },
         ],

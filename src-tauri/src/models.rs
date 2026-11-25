@@ -66,11 +66,13 @@ pub struct SongSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionEntry {
     pub id: i64,
-    // "song" | "bible" | "logo"
+    // "song" | "bible" | "logo" | "message"
     pub item_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub song_id: Option<i64>,
-    // Bible reference (e.g. "John 3:16-18") for bible entries; null otherwise.
+    // Bible reference (e.g. "John 3:16-18") for bible entries, or a prepared
+    // sermon quote's reference (see collections::message_quote_title) for
+    // message entries; null otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
     pub title: String,

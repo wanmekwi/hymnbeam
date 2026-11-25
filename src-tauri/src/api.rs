@@ -464,6 +464,14 @@ async fn add_song_to_col(
             (None, Some(r))
         }
         "logo" => (None, None),
+        // A prepared sermon quote: a reference naming a message, never its text.
+        "message" => {
+            let r = body
+                .reference
+                .filter(|s| crate::collections::message_quote_title(s).is_some())
+                .ok_or(StatusCode::BAD_REQUEST)?;
+            (None, Some(r))
+        }
         _ => return Err(StatusCode::BAD_REQUEST),
     };
     add_item_to_collection(collection_id, item_type, song_id, reference.as_deref())
@@ -722,6 +730,46 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
         (status, json)
+    }
+
+    async fn post(path: &str, body: serde_json::Value) -> StatusCode {
+        create_router()
+            .oneshot(
+                Request::post(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+    }
+
+    // A prepared sermon quote goes in by reference, which must name a message;
+    // it comes back as written, titled by its code and paragraph number.
+    #[tokio::test]
+    async fn a_sermon_quote_is_added_by_reference_and_a_bad_one_refused() {
+        let _db = crate::db::test_util::setup_temp_db();
+        let id = crate::collections::create_collection("Evening").unwrap();
+        let path = format!("/collections/{}/songs", id);
+        let reference = r#"{"v":1,"code":"50-0101","at":1,"n":2,"offset":0}"#;
+        let good = serde_json::json!({ "item_type": "message", "reference": reference });
+        assert_eq!(post(&path, good).await, StatusCode::OK);
+        for bad in [
+            serde_json::json!({ "item_type": "message" }),
+            serde_json::json!({ "item_type": "message", "reference": "50-0101:2" }),
+            serde_json::json!({ "item_type": "message", "reference": r#"{"n":2}"# }),
+        ] {
+            assert_eq!(post(&path, bad.clone()).await, StatusCode::BAD_REQUEST, "{}", bad);
+        }
+
+        let (status, body) = get(&path[..path.len() - "/songs".len()]).await;
+        assert_eq!(status, StatusCode::OK);
+        let entries = body["songs"].as_array().unwrap();
+        assert_eq!(entries.len(), 1, "only the good one");
+        assert_eq!(entries[0]["item_type"], "message");
+        assert_eq!(entries[0]["reference"], reference);
+        assert_eq!(entries[0]["title"], "50-0101 \u{b6}2");
     }
 
     fn codes(hits: &serde_json::Value) -> Vec<&str> {

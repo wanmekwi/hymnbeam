@@ -7,8 +7,6 @@
 // loads them in dependency order (see the <script> tags there).
 
 const MESSAGE_TAB_FALLBACK = 'Sermons';     // the tab's name until a library names it
-const MESSAGE_RECENT_KEY = 'hymnbeam.messages.recent';
-const MESSAGE_RECENT_COUNT = 5;
 // Messages matching by title, date or code are listed above the phrase
 // results. A title used many times would push the phrase results out of sight,
 // so only the first few are listed while there are phrase results to show.
@@ -76,11 +74,52 @@ async function loadMessageStatus() {
     applyMessageTabLabel();
 }
 
+// The tab, and the Display settings target for the same thing, go by the
+// library's name, and are shown only once a library is installed: on a
+// computer without one, HymnBeam shows nothing of it but the Import button
+// under Settings → Library.
 function applyMessageTabLabel() {
     const label = messageState.status?.tab_label || MESSAGE_TAB_FALLBACK;
-    messageEl('messagesTabBtn').textContent = label;
-    // The Display settings target for the same thing goes by the same name.
+    const installed = !!messageState.status?.installed;
+    const tab = messageEl('messagesTabBtn');
+    tab.textContent = label;
+    tab.classList.toggle('hidden', !installed);
     elements.setDisplayTargetMessage.textContent = label;
+    elements.setDisplayTargetMessage.classList.toggle('hidden', !installed);
+    if (!installed) {
+        if (tab.classList.contains('active')) openLibraryTab();
+        if (settingsTarget === 'message') {
+            settingsTarget = 'song';
+            syncSettingsForm();
+            updateSettingsPreview();
+        }
+    }
+    renderMessageLibrarySettings();
+}
+
+// Settings → Library: import a library, or replace or remove the one installed.
+function renderMessageLibrarySettings() {
+    const importBtn = messageEl('settingsMessageImportBtn');
+    if (!importBtn) return;
+    const status = messageState.status;
+    const installed = !!status?.installed;
+    const canRun = !!window.__TAURI__ && !messageState.busy;
+    importBtn.textContent = installed ? 'Replace…' : 'Import…';
+    importBtn.disabled = !canRun;
+    const removeBtn = messageEl('settingsMessageRemoveBtn');
+    removeBtn.classList.toggle('hidden', !installed);
+    removeBtn.disabled = !canRun;
+    messageEl('settingsMessageLibraryHint').textContent = installed
+        ? `${status.tab_label || MESSAGE_TAB_FALLBACK}: ${messageCountText(status)}. It has its own tab in the sidebar.`
+        : 'A message library is one file holding the messages and their text, made for HymnBeam. '
+          + 'Import it on each computer that needs it; it stays installed through updates. '
+          + 'Until then, HymnBeam shows nothing of it.';
+    const progress = messageEl('settingsMessageImportProgress');
+    const error = !messageState.busy && messageState.importError;
+    progress.textContent = messageState.busy
+        ? (messageState.importPercent != null ? `Installing… ${messageState.importPercent}%` : 'Choose the library file…')
+        : (error || '');
+    progress.classList.toggle('message-import-error', !!error);
 }
 
 async function ensureMessageCatalogue() {
@@ -111,6 +150,8 @@ async function messageLibraryChanged(status) {
     applyMessageTabLabel();
     await ensureMessageCatalogue();
     renderMessagePanel();
+    // A collection's prepared quotes show whether this library has them.
+    if (state.openCollection) renderCollectionDetail();
 }
 
 async function importMessageLibrary() {
@@ -231,31 +272,27 @@ function messageHitHtml(hit, stale) {
         </div>`;
 }
 
+// The tab is hidden with no library installed, so this shows only while one
+// is being read, or if it cannot be.
 function messageEmptyHtml() {
     if (messageState.loadError) {
         return `<div class="empty-state"><p>${escapeHtml(messageState.loadError)}</p></div>`;
     }
-    const canImport = !!window.__TAURI__;
-    const progress = messageState.importPercent != null
-        ? `Installing… ${messageState.importPercent}%`
-        : (messageState.busy ? 'Choose the library file…' : '');
     return `
         <div class="empty-state message-empty">
             <p>No message library installed</p>
-            <span>A message library is one file holding the messages and their text, made for
-                HymnBeam. Import it once and it stays installed.</span>
-            <button type="button" class="btn btn-primary" id="messageImportBtn"
-                    ${canImport && !messageState.busy ? '' : 'disabled'}>Import message library…</button>
-            <span class="message-import-progress" id="messageImportProgress">${escapeHtml(progress)}</span>
-            ${messageState.importError
-                ? `<span class="message-import-error">${escapeHtml(messageState.importError)}</span>` : ''}
+            <span>Import one under Settings → Library.</span>
         </div>`;
 }
 
 // Progress events arrive often; only the progress text is redrawn for them.
 function renderMessageImportProgress() {
+    if (messageState.importPercent == null) return;
+    const text = `Installing… ${messageState.importPercent}%`;
     const el = messageEl('messageImportProgress');
-    if (el && messageState.importPercent != null) el.textContent = `Installing… ${messageState.importPercent}%`;
+    if (el) el.textContent = text;
+    const inSettings = messageEl('settingsMessageImportProgress');
+    if (inSettings) inSettings.textContent = text;
 }
 
 function messageBrowseHtml() {
@@ -263,9 +300,6 @@ function messageBrowseHtml() {
     const messages = works.filter(w => w.kind !== 'book' && w.year != null);
     const books = works.filter(w => w.kind === 'book');
     let html = '';
-
-    const recent = loadRecentMessages().map(code => messageState.byCode.get(code)).filter(Boolean);
-    if (recent.length) html += messageSectionHtml('Recent') + recent.map(messageRowHtml).join('');
 
     if (messages.length) {
         const years = new Map();
@@ -327,6 +361,7 @@ function messageResultsHtml() {
 }
 
 function renderMessagePanel() {
+    renderMessageLibrarySettings();
     const list = messageEl('messageContentList');
     const footer = messageEl('messageLibraryFooter');
     const input = messageEl('messageSearchInput');
@@ -489,28 +524,13 @@ async function openMessageResult(el) {
     return openMessage(el.dataset.code, { paragraphId, snippet: hit?.snippet ?? null });
 }
 
-// ---- Recent ---------------------------------------------------------------
-
-function loadRecentMessages() {
-    try {
-        const list = JSON.parse(localStorage.getItem(MESSAGE_RECENT_KEY) || '[]');
-        return Array.isArray(list) ? list.filter(c => typeof c === 'string') : [];
-    } catch (e) {
-        return [];
-    }
-}
-
-function rememberRecentMessage(code) {
-    const list = [code, ...loadRecentMessages().filter(c => c !== code)].slice(0, MESSAGE_RECENT_COUNT);
-    try { localStorage.setItem(MESSAGE_RECENT_KEY, JSON.stringify(list)); }
-    catch (e) { /* storage full or blocked; not worth bothering the operator */ }
-}
-
 // ---- The reader -----------------------------------------------------------
 
 // Show a message in the reader, at its first paragraph or at `paragraphId`.
 // Nothing is projected until a paragraph is chosen.
-async function openMessage(code, { paragraphId = null, snippet = null } = {}) {
+// `wanted`, if given, is asked once the message has come, in case the
+// operator has moved on meanwhile (a collection's next item, say).
+async function openMessage(code, { paragraphId = null, snippet = null, wanted = null } = {}) {
     const seq = ++messageState.openSeq;
     let message;
     try {
@@ -521,6 +541,7 @@ async function openMessage(code, { paragraphId = null, snippet = null } = {}) {
         return false;
     }
     if (seq !== messageState.openSeq) return false;   // another message was asked for since
+    if (wanted && !wanted()) return false;
 
     const paragraphs = message.paragraphs || [];
     const work = messageState.byCode.get(code) || message;
@@ -528,10 +549,9 @@ async function openMessage(code, { paragraphId = null, snippet = null } = {}) {
     messageState.message = { work, paragraphs };
     messageState.highlighted = paragraphs.length ? Math.max(0, at) : null;
     messageState.hitTarget = at >= 0 && snippet ? { paragraphId, snippet } : null;
+    // The open year shows the next time the browse list is drawn, rather than
+    // moving rows under the operator's pointer now.
     if (work.kind !== 'book' && work.year != null) messageState.openYear = work.year;
-    // Recent and the open year show the next time the browse list is drawn,
-    // rather than moving rows under the operator's pointer now.
-    rememberRecentMessage(code);
 
     renderMessageReader();
     setContentView('message');
@@ -1015,18 +1035,22 @@ function addMessageMark(code, index, text, span) {
     messageState.marks.at.set(index, joined);
 }
 
-// The highlights of these paragraphs changed: show it in the reader and on screen.
-function messageMarksChanged(code, indices) {
+// Redraw these paragraphs' highlights in the reader, if it shows that message.
+function redrawReaderMarks(code, indices) {
     const m = messageState.message;
-    if (m && m.work.code === code) {
-        for (const index of indices) {
-            const textEl = messageEl('messageParagraphs')
-                .querySelector(`.message-paragraph[data-index="${index}"] .verse-card-text`);
-            if (textEl && m.paragraphs[index]) {
-                textEl.innerHTML = messageMarkedHtml(m.paragraphs[index].text, messageMarksOf(code, index));
-            }
+    if (!m || m.work.code !== code) return;
+    for (const index of indices) {
+        const textEl = messageEl('messageParagraphs')
+            .querySelector(`.message-paragraph[data-index="${index}"] .verse-card-text`);
+        if (textEl && m.paragraphs[index]) {
+            textEl.innerHTML = messageMarkedHtml(m.paragraphs[index].text, messageMarksOf(code, index));
         }
     }
+}
+
+// The highlights of these paragraphs changed: show it in the reader and on screen.
+function messageMarksChanged(code, indices) {
+    redrawReaderMarks(code, indices);
     const live = messageState.live;
     if (state.liveSlide?.kind === 'message' && live && live.work.code === code) {
         const layout = messageLayout(live.work, live.paragraphs);
@@ -1206,6 +1230,185 @@ function moveParagraphHighlight(direction) {
     return true;
 }
 
+// ---- Prepared quotes -----------------------------------------------------------
+//
+// A place in a message can be added to a collection, to be projected from
+// there with PageDown like a song or a reading. Only a reference is kept,
+// never the text (D6): the message's code; the paragraph at the top of the
+// screen, by its place in the message (`at`, since a few messages number
+// some paragraphs twice) and its number (`n`); where in it the top line starts
+// (`offset`); where the screen ended (`end`, the first character not on it;
+// none if it reached the end of the message); the highlights, as
+// [paragraph, from, to]; and, to tell whether the library has changed since,
+// the library's numbering id and a checksum (`sum`) of the paragraphs the
+// quote points into. The checksum is a number made from their text, and
+// gives none of it away.
+
+const MESSAGE_QUOTE_VERSION = 1;
+
+// FNV-1a, 32 bits, as 8 hex digits.
+function messageTextSum(texts) {
+    let h = 0x811c9dc5;
+    const add = (code) => { h = Math.imul(h ^ code, 0x01000193) >>> 0; };
+    for (const text of texts) {
+        for (let i = 0; i < text.length; i++) add(text.charCodeAt(i));
+        add(10);
+    }
+    return h.toString(16).padStart(8, '0');
+}
+
+function messageQuoteSum(paragraphs, at, marks) {
+    const indices = [...new Set([at, ...marks.map(mark => mark[0])])].sort((a, b) => a - b);
+    return messageTextSum(indices.map(i => paragraphs[i]?.text ?? ''));
+}
+
+// The quote the reader would add now: if its highlight is on what the screen
+// shows, the screen as it is, highlights and all; otherwise the highlighted
+// paragraph, from its start. Null with no message open.
+function messageQuoteNow() {
+    const m = messageState.message;
+    if (!m || !m.paragraphs.length) return null;
+    const live = messageState.live;
+    const at0 = messageState.highlighted;
+    const onScreen = !!live && live.work.code === m.work.code && at0 != null
+        && at0 >= live.screen.first && at0 <= live.screen.last;
+    const quote = { v: MESSAGE_QUOTE_VERSION, code: m.work.code };
+    let marks = [];
+    if (onScreen) {
+        const layout = messageLayout(live.work, live.paragraphs);
+        quote.at = live.place.paragraph;
+        quote.offset = live.offset;
+        const lastLine = messageMoveLines(layout, live.place, live.shown - 1);
+        const after = messageNextLine(layout, lastLine, 1);
+        if (after) quote.end = [after.paragraph, messageOffsetOf(layout, after)];
+        marks = messageWindowMarks(m.work.code, { first: 0, last: m.paragraphs.length - 1 });
+    } else {
+        quote.at = at0 ?? 0;
+        quote.offset = 0;
+    }
+    quote.n = m.paragraphs[quote.at].number ?? null;
+    if (marks.length) quote.marks = marks;
+    if (messageState.status?.numbering_id) quote.numbering = messageState.status.numbering_id;
+    quote.sum = messageQuoteSum(m.paragraphs, quote.at, marks);
+    return quote;
+}
+
+// A stored reference, read back; null if it is not one.
+function parseMessageQuote(reference) {
+    let q;
+    try { q = JSON.parse(reference); } catch { return null; }
+    if (!q || typeof q !== 'object' || typeof q.code !== 'string' || !q.code.trim()) return null;
+    const whole = (x) => Number.isInteger(x) && x >= 0;
+    return {
+        code: q.code.trim(),
+        at: whole(q.at) ? q.at : 0,
+        n: Number.isInteger(q.n) ? q.n : null,
+        offset: whole(q.offset) ? q.offset : 0,
+        end: Array.isArray(q.end) && whole(q.end[0]) && whole(q.end[1]) ? [q.end[0], q.end[1]] : null,
+        marks: Array.isArray(q.marks)
+            ? q.marks.filter(m => Array.isArray(m) && whole(m[0]) && whole(m[1]) && whole(m[2]) && m[1] < m[2])
+                .sort((a, b) => a[0] - b[0] || a[1] - b[1])
+            : [],
+        numbering: typeof q.numbering === 'string' ? q.numbering : null,
+        sum: typeof q.sum === 'string' ? q.sum : null,
+    };
+}
+
+// How a quote stands with the library installed now: 'ok'; 'no-library';
+// 'missing' (the library has no such message); or null while the library's
+// status is not yet known. Whether its paragraph is still the one meant can
+// only be told once the message's text is read (see showMessageQuote).
+function messageQuoteStanding(quote) {
+    const status = messageState.status;
+    if (!status) return null;
+    if (!status.installed) return 'no-library';
+    if (messageState.catalogue && !messageState.byCode.has(quote.code)) return 'missing';
+    return 'ok';
+}
+
+// Project a prepared quote: open its message in the reader (so the wheel, the
+// keys and highlighting work on it as on any other) and put its place at the
+// top of the screen, with its highlights and only those. `wanted` is asked
+// after each wait, in case the operator has moved on.
+//
+// The library may have been rebuilt since the quote was saved. A rebuild
+// changes the numbering id whenever any paragraph anywhere is numbered
+// differently, so the quote is checked against its own paragraphs instead:
+// if the paragraph at its place has its number and their text its checksum,
+// it is projected as saved. If the number is not there, or the numbering has
+// changed and the text cannot be vouched for, the message is opened at the
+// paragraph with its number but not projected, for the operator to check and
+// project with Enter. If only the wording has changed, it is projected from
+// the start of its paragraph, without its highlights. False if nothing was
+// projected.
+async function showMessageQuote(quote, wanted = () => true) {
+    await ensureMessageCatalogue();
+    if (!wanted()) return false;
+    const standing = messageQuoteStanding(quote);
+    if (standing === 'no-library' || standing === null) {
+        updateStatus('The message library is not installed');
+        return false;
+    }
+    if (standing === 'missing') {
+        updateStatus(`${quote.code} is not in the message library`);
+        return false;
+    }
+    if (!(await openMessage(quote.code, { wanted }))) return false;
+    const { work, paragraphs } = messageState.message;
+    if (!paragraphs.length) return false;
+
+    const at = quote.at;
+    const placeHolds = !!paragraphs[at] && (quote.n == null || paragraphs[at].number === quote.n);
+    const textHolds = placeHolds && quote.sum ? quote.sum === messageQuoteSum(paragraphs, at, quote.marks) : null;
+    const status = messageState.status;
+    const renumbered = !!(quote.numbering && status?.numbering_id && quote.numbering !== status.numbering_id);
+    if (!placeHolds || (renumbered && !textHolds)) {
+        const byNumber = quote.n == null ? -1 : paragraphs.findIndex(p => p.number === quote.n);
+        messageState.highlighted = byNumber >= 0 ? byNumber : Math.min(at, paragraphs.length - 1);
+        markMessageParagraphs();
+        scrollMessageParagraph(messageState.highlighted, 'center');
+        updateStatus('The library has changed since this quote was saved: check the paragraph, then press Enter to project it');
+        return false;
+    }
+
+    let { offset, marks, end } = quote;
+    if (textHolds === false) {
+        offset = 0;
+        marks = [];
+        end = null;
+        updateStatus('The wording has changed since this quote was saved: it is shown from the start of its paragraph, without its highlights');
+    }
+    // Its highlights take the place of any the message had.
+    dropMessageMarks();
+    for (const [index, from, to] of marks) {
+        const text = paragraphs[index]?.text;
+        if (text != null && to <= text.length) addMessageMark(work.code, index, text, [from, to]);
+    }
+    if (messageState.marks) redrawReaderMarks(work.code, [...messageState.marks.at.keys()]);
+
+    const layout = messageLayout(work, paragraphs);
+    let place = messagePlaceAt(layout, at, offset);
+    // Its lines may break differently on this screen than where it was saved,
+    // so that highlights on screen then would not be now: move on just far
+    // enough to show as many of them as will fit, but never past the first.
+    const onThen = marks.filter(([index, from]) =>
+        (index > at || (index === at && from >= offset)) && (!end || index < end[0] || (index === end[0] && from < end[1])));
+    if (onThen.length) {
+        const shown = messageLinesShown(layout, place);
+        const lastShown = messageMoveLines(layout, place, shown - 1);
+        const [lastIndex, , lastTo] = onThen[onThen.length - 1];
+        const lastEnd = messagePlaceAt(layout, lastIndex, lastTo - 1);
+        if (compareMessagePlaces(lastEnd, lastShown) > 0) {
+            const firstStart = messagePlaceAt(layout, onThen[0][0], onThen[0][1]);
+            let top = messageMoveLines(layout, lastEnd, -(shown - 1));
+            if (compareMessagePlaces(top, firstStart) > 0) top = firstStart;
+            if (compareMessagePlaces(top, place) > 0) place = top;
+        }
+    }
+    showMessagePlace(work, paragraphs, place, { jump: true });
+    return true;
+}
+
 // ---- The tab --------------------------------------------------------------
 
 async function openMessagesTab() {
@@ -1216,6 +1419,12 @@ async function openMessagesTab() {
 
 function initMessageListeners() {
     messageEl('messagesTabBtn').addEventListener('click', openMessagesTab);
+    messageEl('settingsMessageImportBtn').addEventListener('click', importMessageLibrary);
+    messageEl('settingsMessageRemoveBtn').addEventListener('click', () => {
+        // The confirmation would open under the settings dialog (as for a backup restore).
+        closeSettingsModal();
+        confirmRemoveMessageLibrary();
+    });
 
     const input = messageEl('messageSearchInput');
     input.addEventListener('input', () => onMessageInput(input.value));

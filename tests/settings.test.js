@@ -325,9 +325,9 @@ test('the message display is named after the library, and mirrors the Bible\'s b
     assert.equal(hidden('messageMatchBibleBtn'), true);
 });
 
-test('with no library the message display goes by the fallback name', async () => {
+test('with no library there is no message display to set', async () => {
     await openSettings();
-    assert.equal(app.$('#setDisplayTarget button[data-value="message"]').textContent, 'Sermons');
+    assert.equal(app.$('#setDisplayTarget button[data-value="message"]').classList.contains('hidden'), true);
 });
 
 test('the text size is the message display\'s own, even while it mirrors', async () => {

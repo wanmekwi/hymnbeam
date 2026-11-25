@@ -92,7 +92,8 @@
                     <button type="button" class="sidebar-tab" id="collectionsTabBtn">Collections</button>
                     <button type="button" class="sidebar-tab" id="bibleTabBtn">Bible</button>
                     <!-- Named by the installed message library (see messages.js) -->
-                    <button type="button" class="sidebar-tab" id="messagesTabBtn">Sermons</button>
+                    <!-- Shown only once a message library is imported (see messages.js). -->
+                    <button type="button" class="sidebar-tab hidden" id="messagesTabBtn">Sermons</button>
                 </div>
 
                 <!-- Library panel -->
@@ -391,6 +392,26 @@
                             <h1 class="song-title" id="messageDisplayTitle"></h1>
                             <p class="song-author" id="messageDisplaySubtitle"></p>
                         </div>
+                        <div class="song-actions">
+                            <div class="add-to-collection-wrapper">
+                                <button type="button" class="btn btn-icon" id="messageAddToCollectionBtn" title="Add to a collection: the text as it is on screen, with its highlights, or the highlighted paragraph">
+                                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M3 6h14M3 10h14M3 14h8"/>
+                                        <circle cx="16" cy="14" r="3"/>
+                                        <path d="M16 12.5v3M14.5 14h3"/>
+                                    </svg>
+                                </button>
+                                <div class="collection-picker" id="messageCollectionPicker">
+                                    <div class="collection-picker-list" id="messageCollectionPickerList"></div>
+                                    <button type="button" class="collection-picker-new" id="messageCollectionPickerNew">
+                                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M8 3v10M3 8h10"/>
+                                        </svg>
+                                        New collection
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                         <div class="preview-area">
                             <button type="button" class="preview-layout-toggle" id="messagePreviewToggle" aria-label="Toggle preview"></button>
                             <div class="preview-container" id="messagePreviewContainer">
@@ -649,7 +670,7 @@ Second verse lyrics..."></textarea>
                         <div class="segmented" id="setDisplayTarget">
                             <button type="button" data-value="song" class="active">Songs</button>
                             <button type="button" data-value="bible">Bible</button>
-                            <button type="button" data-value="message" id="setDisplayTargetMessage">Sermons</button>
+                            <button type="button" data-value="message" id="setDisplayTargetMessage" class="hidden">Sermons</button>
                         </div>
                         <div class="bible-target-options hidden" id="bibleTargetOptions">
                             <label class="toggle-inline" for="setBibleSameAsSongs">
@@ -838,6 +859,18 @@ Second verse lyrics..."></textarea>
                             </div>
                             <span class="form-hint">Finds songs sharing the same title. Deleting a copy moves it to Recently Deleted, so it can be undone.</span>
                             <ul class="library-list" id="duplicateList"></ul>
+                        </div>
+
+                        <div class="library-section" id="messageLibrarySection">
+                            <div class="library-section-header">
+                                <h3>Message Library</h3>
+                                <div class="library-section-actions">
+                                    <button type="button" class="btn btn-secondary btn-small hidden" id="settingsMessageRemoveBtn">Remove</button>
+                                    <button type="button" class="btn btn-secondary btn-small" id="settingsMessageImportBtn">Import…</button>
+                                </div>
+                            </div>
+                            <span class="form-hint" id="settingsMessageLibraryHint"></span>
+                            <span class="message-import-progress" id="settingsMessageImportProgress"></span>
                         </div>
 
                         <div class="library-section">

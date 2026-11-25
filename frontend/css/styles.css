@@ -1792,6 +1792,9 @@ body {
 
 .collection-song-item.entry-bible .collection-entry-icon { color: #7fb0ff; }
 .collection-song-item.entry-logo .collection-entry-icon { color: var(--accent); }
+.collection-song-item.entry-message .collection-entry-icon { color: #e8b86a; }
+/* A prepared quote this computer's message library cannot project as saved. */
+.collection-song-item.entry-unavailable .collection-song-author { color: #e0a060; }
 
 /* Add-item menu (Bible passage / logo slide) */
 .collection-add-wrapper {
@@ -2385,6 +2388,11 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
+}
+
+.library-section-actions {
+    display: flex;
+    gap: 8px;
 }
 
 .library-section-header h3 {

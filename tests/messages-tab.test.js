@@ -38,61 +38,102 @@ const onScreenCards = () => app.$$('#messageParagraphs .message-paragraph.active
 const top = () => app.onScreen().scroll.anchor;
 
 // ---- No library ------------------------------------------------------------
+//
+// On a computer without a library HymnBeam shows nothing of it: no tab, no
+// Display settings target, no shortcut. It is imported under Settings → Library.
 
-test('with no library installed the tab offers to import one', async () => {
-    await openMessages({ messages: null });
-    assert.equal(tabLabel(), 'Sermons');
-    assert.match(listText(), /No message library installed/);
-    assert.equal(app.$('#messageImportBtn').disabled, false);
-    assert.equal(app.$('#messageSearchInput').disabled, true);
-    assert.equal(app.$('#messageLibraryFooter').hidden, true);
+const tabShown = () => !app.$('#messagesTabBtn').classList.contains('hidden');
+const targetShown = () => !app.$('#setDisplayTargetMessage').classList.contains('hidden');
+const activeTab = () => app.$('.sidebar-tab.active')?.id;
+const settingsHint = () => app.$('#settingsMessageLibraryHint').textContent;
+const settingsProgress = () => app.$('#settingsMessageImportProgress').textContent;
+async function bootWithout(options = {}) {
+    app = await bootApp({ songs, messages: null, ...options });
+    await app.until(() => app.$('#settingsMessageLibraryHint').textContent, 'the library status');
+}
+async function openLibrarySettings() {
+    await app.click('#settingsBtn');
+    await app.click('.settings-tab[data-tab="library"]');
+}
+
+test('with no library installed nothing of it shows, and it is imported from Settings → Library', async () => {
+    await bootWithout();
+    assert.equal(tabShown(), false);
+    assert.equal(targetShown(), false);
+    await app.press('4', { ctrlKey: true });
+    assert.equal(activeTab(), 'libraryTabBtn', 'its shortcut does nothing');
+    await app.press('[');
+    assert.equal(activeTab(), 'bibleTabBtn', '[ goes round past it');
+    await app.press(']');
+    assert.equal(activeTab(), 'libraryTabBtn');
+
+    await openLibrarySettings();
+    assert.equal(app.$('#settingsMessageImportBtn').textContent, 'Import…');
+    assert.equal(app.$('#settingsMessageImportBtn').disabled, false);
+    assert.equal(app.$('#settingsMessageRemoveBtn').classList.contains('hidden'), true);
+    assert.match(settingsHint(), /stays installed through updates/);
     assert.deepEqual(app.unhandledRequests, []);
 });
 
-test('importing shows progress, then names the tab and lists the library', async () => {
+test('importing shows progress, then the tab appears, named by the library', async () => {
     let finish;
-    await openMessages({
-        messages: null,
+    await bootWithout({
         commands: {
             import_message_library: (args, db) => new Promise(resolve => {
                 finish = () => { db.messages = structuredClone(messageLibrary); resolve(messageLibrary.status); };
             }),
         },
     });
-    await app.click('#messageImportBtn');
+    await openLibrarySettings();
+    await app.click('#settingsMessageImportBtn');
     assert.equal(app.invokes.filter(i => i.cmd === 'import_message_library').length, 1);
-    assert.equal(app.$('#messageImportBtn').disabled, true, 'one import at a time');
+    assert.equal(app.$('#settingsMessageImportBtn').disabled, true, 'one import at a time');
+    assert.equal(settingsProgress(), 'Choose the library file…');
 
     await app.emit('message-library-progress', { copied: 50, total: 200 });
-    assert.equal(app.$('#messageImportProgress').textContent, 'Installing… 25%');
+    assert.equal(settingsProgress(), 'Installing… 25%');
 
     finish();
-    await app.until(() => app.$('.message-year-cell'), 'the library to be listed');
+    await app.until(() => tabShown(), 'the tab to appear');
     assert.equal(tabLabel(), 'The Test Tab');
+    assert.equal(targetShown(), true);
+    assert.equal(app.$('#setDisplayTargetMessage').textContent, 'The Test Tab');
     assert.equal(app.toast(), 'Message library installed: 6 messages · 3 chapters');
+    assert.equal(app.$('#settingsMessageImportBtn').textContent, 'Replace…');
+    assert.equal(app.$('#settingsMessageRemoveBtn').classList.contains('hidden'), false);
+    assert.equal(settingsHint(), 'The Test Tab: 6 messages · 3 chapters. It has its own tab in the sidebar.');
+    assert.equal(settingsProgress(), '');
+
+    await app.click('#settingsDoneBtn');
+    await app.press('4', { ctrlKey: true });
+    assert.equal(activeTab(), 'messagesTabBtn');
+    await app.until(() => app.$('.message-year-cell'), 'the library to be listed');
     assert.equal(app.$('#messageSearchInput').disabled, false);
 });
 
 test('cancelling the file picker leaves things as they were', async () => {
-    await openMessages({ messages: null, commands: { import_message_library: () => null } });
-    await app.click('#messageImportBtn');
+    await bootWithout({ commands: { import_message_library: () => null } });
+    await openLibrarySettings();
+    await app.click('#settingsMessageImportBtn');
     await app.settle(20);
-    assert.match(listText(), /No message library installed/);
-    assert.equal(app.$('#messageImportBtn').disabled, false);
+    assert.equal(tabShown(), false);
+    assert.equal(app.$('#settingsMessageImportBtn').disabled, false);
+    assert.equal(settingsProgress(), '');
 });
 
 test('a file that is not a library is refused with the reason', async () => {
-    await openMessages({
-        messages: null,
+    await bootWithout({
         commands: { import_message_library: () => { throw 'This file is not a HymnBeam message library.'; } },
     });
-    await app.click('#messageImportBtn');
+    await openLibrarySettings();
+    await app.click('#settingsMessageImportBtn');
     await app.settle(20);
-    assert.match(listText(), /This file is not a HymnBeam message library\./);
-    assert.equal(tabLabel(), 'Sermons');
+    assert.equal(settingsProgress(), 'This file is not a HymnBeam message library.');
+    assert.equal(app.$('#settingsMessageImportProgress').classList.contains('message-import-error'), true);
+    assert.equal(tabShown(), false);
 });
 
-test('the library can be removed, after confirming', async () => {
+test('the library can be removed from its tab, after confirming, and the tab goes with it', async () => {
     await openMessages({
         commands: { remove_message_library: (args, db) => { db.messages = null; return { installed: false }; } },
     });
@@ -105,9 +146,28 @@ test('the library can be removed, after confirming', async () => {
     await app.click('#confirmDeleteBtn');
     await app.settle(20);
     assert.equal(app.invokes.filter(i => i.cmd === 'remove_message_library').length, 1);
-    assert.match(listText(), /No message library installed/);
-    assert.equal(tabLabel(), 'Sermons');
+    assert.equal(tabShown(), false);
+    assert.equal(targetShown(), false);
+    assert.equal(activeTab(), 'libraryTabBtn', 'back to the song library');
     assert.equal(app.$('#messageDisplay').hidden, true, 'the reader closes with it');
+});
+
+test('the library can be removed from Settings → Library too', async () => {
+    await openMessages({
+        commands: { remove_message_library: (args, db) => { db.messages = null; return { installed: false }; } },
+    });
+    await app.click('#settingsBtn');
+    await app.click('#setDisplayTarget button[data-value="message"]');
+    await app.click('.settings-tab[data-tab="library"]');
+    await app.click('#settingsMessageRemoveBtn');
+    assert.equal(app.$('#settingsModal').classList.contains('active'), false, 'out of the way of the confirmation');
+    assert.equal(app.$('#confirmModal').classList.contains('active'), true);
+    await app.click('#confirmDeleteBtn');
+    await app.settle(20);
+    assert.equal(tabShown(), false);
+    await app.click('#settingsBtn');
+    assert.equal(app.$('#setDisplayTarget button.active').dataset.value, 'song');
+    assert.equal(app.$('#settingsMessageImportBtn').textContent, 'Import…');
 });
 
 // ---- Browsing --------------------------------------------------------------
@@ -168,7 +228,7 @@ test('the reader shows the text as it is, brackets and all', async () => {
         'The spring will surely come. [The listeners say amen.]');
 });
 
-test('messages opened are listed under Recent, newest first', async () => {
+test('coming back to the tab shows the year last opened, with no Recent row', async () => {
     await openMessages();
     await app.click('.message-year-cell[data-year="1958"]');
     await openRow('58-0105M');
@@ -176,9 +236,10 @@ test('messages opened are listed under Recent, newest first', async () => {
     await app.click('#libraryTabBtn');
     await app.click('#messagesTabBtn');
     await app.settle(10);
-    const recent = app.$$('#messageContentList > .message-row').map(r => r.dataset.code);
-    assert.deepEqual(recent.slice(0, 2), ['58-0105E', '58-0105M']);
-    assert.ok(app.$('.message-year-cell[data-year="1958"].expanded'), 'and the year last opened is open');
+    const labels = app.$$('#messageContentList > .bible-section-label').map(l => l.textContent);
+    assert.equal(labels[0], 'Messages', 'the browse list starts with the years');
+    assert.ok(!labels.includes('Recent'));
+    assert.ok(app.$('.message-year-cell[data-year="1958"].expanded'), 'the year last opened is open');
 });
 
 // ---- Going straight to a message ----------------------------------------------
