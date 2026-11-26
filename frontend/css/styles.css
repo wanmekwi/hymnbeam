@@ -89,6 +89,23 @@ body {
     background: var(--bg-tertiary);
 }
 
+/* An update is waiting — see renderUpdatePanel() in app.js. */
+.logo.has-update {
+    position: relative;
+}
+
+.logo.has-update::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 34px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 2px var(--bg-primary);
+}
+
 .logo-icon {
     width: 32px;
     height: 32px;

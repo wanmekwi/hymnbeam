@@ -159,6 +159,14 @@ async function fetchBibleBooks() {
     _bookIndex = null;
 }
 
+// Reference parsing resolves book names against this list, which is otherwise
+// only fetched when the Bible tab is opened. Anything that parses a reference
+// from elsewhere (an order-of-service reading) must await this first, or every
+// reference fails to resolve until the operator happens to visit the tab.
+async function ensureBibleBooks() {
+    if (!bibleState.books.length) await fetchBibleBooks();
+}
+
 async function fetchBibleChapter(bookCode, chapter) {
     const res = await fetch(`${API_URL}/bible/${encodeURIComponent(bookCode)}/${chapter}`);
     if (!res.ok) throw new Error('Failed to load chapter');
@@ -399,7 +407,7 @@ function parseReference(query) {
 }
 
 async function loadBibleChapterReference({ book, chapter }) {
-    if (!bibleState.books.length) await fetchBibleBooks();
+    await ensureBibleBooks();
     bibleState.expandedBook = book.code;
     bibleState.openBook = book;
     bibleState.activeVerse = null;

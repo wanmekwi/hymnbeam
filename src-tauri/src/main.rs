@@ -296,14 +296,13 @@ fn main() {
         .plugin(tauri_plugin_axum::init(api::create_router()))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        // The updater plugin is registered but stays dormant until an updater
-        // endpoint + pubkey are configured (see docs/plans/auto-update-setup.md).
-        // Without that config, check() simply errors and the frontend falls
-        // back to opening the release download in the browser.
+        // In-place updates: the frontend checks at launch and on demand, then
+        // downloads, verifies and installs the signed payload named by
+        // latest.json (see docs/plans/auto-update-setup.md). If check() fails
+        // the frontend falls back to opening the release download.
         .plugin(tauri_plugin_updater::Builder::new().build())
-        // Lets the frontend relaunch the app after an in-place update installs
-        // (tryPluginAutoUpdate → window.__TAURI__.process.relaunch). Harmless
-        // while the updater is dormant.
+        // Lets the frontend relaunch the app once an update has installed
+        // (installDownloadedUpdate → window.__TAURI__.process.relaunch).
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             get_app_version,

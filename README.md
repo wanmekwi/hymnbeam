@@ -188,7 +188,17 @@ cargo install tauri-cli
 cargo tauri dev
 ```
 
-The embedded `axum` HTTP server starts on an OS-assigned port before the operator window opens. The frontend reads the port via the `get_api_port` Tauri command — there is no separate backend process.
+The backend is an `axum` router mounted on a Tauri custom protocol (`axum://localhost`, or `http://axum.localhost` on Windows) — there is no TCP port and no separate backend process.
+
+### Tests
+
+```bash
+npm install          # once — installs jsdom, the only test dependency
+npm test             # frontend: boots the real operator UI against a fake backend
+cd src-tauri && cargo test   # backend
+```
+
+The frontend tests (`tests/`) load `frontend/index.html` and its scripts unmodified, press keys the way an operator does, and assert on what would have been sent to the projector. Both suites run on every push and pull request, and a release tag only builds installers once they pass.
 
 Song library and uploaded backgrounds are stored in `~/Library/Application Support/HymnBeam/`.
 
@@ -214,10 +224,11 @@ hymnbeam/
 │   ├── index.html        # Operator window
 │   ├── projector.html    # Projector display
 │   ├── css/              # Stylesheets
-│   ├── js/               # Application logic
+│   ├── js/               # Application logic, one plain script per area
 │   ├── fonts/            # Bundled WOFF2 fonts (SIL OFL)
 │   └── img/              # In-app logo art
 ├── src-tauri/icons/      # App icon variants (.icns / .ico / png)
+├── tests/                # Frontend tests (jsdom) — `npm test`
 ├── songs/                # Sample song files
 ├── docs/                 # Screenshots for README
 └── build-macos.sh        # Universal-binary build + ad-hoc sign

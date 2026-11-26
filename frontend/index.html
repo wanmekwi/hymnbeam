@@ -810,7 +810,18 @@ Second verse lyrics..."></textarea>
         </div>
     </div>
 
-    <script src="js/app.js"></script>
+    <!-- Plain scripts sharing one global scope. Order matters only for code
+         that runs at load time: core.js first, app.js (which boots) last. -->
+    <script src="js/core.js"></script>
+    <script src="js/library.js"></script>
+    <script src="js/live.js"></script>
+    <script src="js/import.js"></script>
+    <script src="js/song-editing.js"></script>
+    <script src="js/dialogs.js"></script>
+    <script src="js/updates.js"></script>
+    <script src="js/collections.js"></script>
+    <script src="js/settings.js"></script>
     <script src="js/bible.js"></script>
+    <script src="js/app.js"></script>
 </body>
 </html>

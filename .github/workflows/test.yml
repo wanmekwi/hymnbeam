@@ -1,0 +1,64 @@
+name: Tests
+
+# Runs the frontend and backend test suites on every push to main and every
+# pull request. release.yml also calls this workflow and makes both installer
+# builds wait on it, so a tag whose tests fail never produces a release.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  # Boots the real operator UI in jsdom against a fake backend and drives it
+  # with key presses (see tests/helpers/boot.js). No Rust, no webview.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install test dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test
+
+  # The Rust unit tests (database migrations, import parsing, collections…),
+  # on both platforms the app ships for.
+  backend:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # A separate cache from the release builds: tests compile the debug
+      # profile, and sharing a key would let one evict the other.
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+
+      - name: Run backend tests
+        working-directory: src-tauri
+        run: cargo test --locked
