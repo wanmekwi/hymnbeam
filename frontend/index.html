@@ -391,6 +391,13 @@
                         <div class="song-meta">
                             <h1 class="song-title" id="messageDisplayTitle"></h1>
                             <p class="song-author" id="messageDisplaySubtitle"></p>
+                            <!-- Find in this message: for when the preacher skips ahead in it. -->
+                            <div class="message-find">
+                                <input type="search" id="messageFindInput"
+                                       placeholder="Find in this message…" autocomplete="off"
+                                       aria-label="Find in this message"/>
+                                <div class="message-find-results" id="messageFindResults" hidden></div>
+                            </div>
                         </div>
                         <div class="song-actions">
                             <div class="add-to-collection-wrapper">

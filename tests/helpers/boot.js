@@ -252,16 +252,19 @@ function searchMessages(library, params) {
     const from = params.has('from') ? Number(params.get('from')) : null;
     const to = params.has('to') ? Number(params.get('to')) : null;
     const kind = params.get('kind');
+    const code = params.get('code');
     const limit = Number(params.get('limit') || 20);
-    const groups = { phrase: [], words: [] };
+    // As the real backend names them: the words as a phrase, then all of them anywhere.
+    const groups = { phrase: [], all: [] };
     for (const work of library.works) {
         if (kind && kind !== 'all' && work.kind !== kind) continue;
+        if (code && work.code !== code) continue;
         if (from != null && !(work.year >= from)) continue;
         if (to != null && !(work.year <= to)) continue;
         for (const p of library.paragraphs[work.code] ?? []) {
             const text = p.text.toLowerCase();
             const group = text.includes(q) ? 'phrase'
-                : words.every(w => text.includes(w)) ? 'words' : null;
+                : words.every(w => text.includes(w)) ? 'all' : null;
             if (!group) continue;
             const at = text.indexOf(words[0]);
             const marked = p.text.slice(0, at) + '\uE000' + p.text.slice(at, at + words[0].length) +
@@ -278,7 +281,7 @@ function searchMessages(library, params) {
             });
         }
     }
-    return [...groups.phrase, ...groups.words].slice(0, limit);
+    return [...groups.phrase, ...groups.all].slice(0, limit);
 }
 
 // Stand-in for window.__TAURI__. Records every command the UI invokes;

@@ -245,12 +245,19 @@ function initEventListeners() {
     //   1. Typing always wins — anything aimed at a field bails out early.
     //   2. Modifier chords bail out too, so the native menu accelerators
     //      (⌘⇧P, ⌘B, ⌘L …) stay the sole owners of their combinations and can
-    //      never double-fire against a plain key here. Ctrl+digit is the one
-    //      deliberate exception and is handled before that check.
+    //      never double-fire against a plain key here. Two chords are
+    //      deliberate exceptions, handled before that check: Ctrl+digit, and
+    //      ⌘F (Ctrl+F on Windows), which is in no menu.
     //   3. Escape unwinds one layer at a time rather than always clearing the
     //      display — see handleEscape().
     document.addEventListener('keydown', (e) => {
         const target = e.target;
+        // ⌘F finds in the message open in the reader, even from another
+        // field. Kept from the webview, which may have a find bar of its own.
+        if (isMessageFindKey(e) && focusMessageFind()) {
+            e.preventDefault();
+            return;
+        }
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
             // Escape is the way back out of a field the operator tabbed into.
             if (e.key === 'Escape') {

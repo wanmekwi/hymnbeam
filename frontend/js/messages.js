@@ -552,6 +552,7 @@ async function openMessage(code, { paragraphId = null, snippet = null, wanted = 
     // The open year shows the next time the browse list is drawn, rather than
     // moving rows under the operator's pointer now.
     if (work.kind !== 'book' && work.year != null) messageState.openYear = work.year;
+    resetMessageFind();
 
     renderMessageReader();
     setContentView('message');
@@ -594,6 +595,230 @@ function scrollMessageParagraph(index, block = 'nearest') {
     if (index == null) return;
     messageEl('messageParagraphs').querySelector(`.message-paragraph[data-index="${index}"]`)
         ?.scrollIntoView({ block });
+}
+
+// ---- Find in this message ------------------------------------------------------
+//
+// For when the preacher skips ahead in the message that is open: a box under
+// the reader's title searches only this message, and lists the paragraphs
+// holding the words, in the order they come in it, the exact phrase first.
+// ↓ / ↑ move through the list, and Enter (or a click) goes to one: the
+// reader's highlight moves to that paragraph, and the next Enter projects it
+// from the line with the words, as for a search result. Nothing is projected
+// until then, and the highlight stays there while the text on screen rolls
+// (see messageHighlightHeld). The find has its own query, results and
+// sequence, apart from the tab's box, and starts afresh whenever another
+// message is opened.
+
+const MESSAGE_FIND_LIMIT = 100;      // the most the back end gives at once
+const MESSAGE_FIND_DELAY_MS = 120;   // searching one message is quick; this only spares a reply per keystroke
+const messageFind = {
+    query: '',
+    hits: null,          // the results for hitsQuery, in the message's order; null before the first reply
+    hitsQuery: null,
+    full: false,         // the back end gave as many as asked for, so some may be missing
+    failed: false,
+    cursor: -1,          // the keyboard's place in the list
+    from: null,          // the paragraph being read as the box was last used: the keyboard starts there
+    seq: 0,              // bumped on every keystroke and every new message, so a late reply is dropped
+    inFlight: null,      // {seq, promise} of the search running now
+    timer: null,
+};
+
+// ⌘F, or Ctrl+F away from a Mac. Not Ctrl+F on a Mac, where it moves the
+// cursor in a text field.
+const MESSAGE_FIND_ON_MAC = navigator.userAgent.includes('Mac');
+function isMessageFindKey(e) {
+    return (e.key === 'f' || e.key === 'F') && !e.altKey && !e.shiftKey
+        && (MESSAGE_FIND_ON_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey);
+}
+
+// Put the keyboard in the find box, if the reader shows a message.
+function focusMessageFind() {
+    if (!messageReaderShown() || getOpenModal()) return false;
+    const input = messageEl('messageFindInput');
+    input.focus();
+    input.select();
+    renderMessageFind();
+    return true;
+}
+
+function resetMessageFind() {
+    clearTimeout(messageFind.timer);
+    Object.assign(messageFind, {
+        query: '', hits: null, hitsQuery: null, full: false, failed: false,
+        cursor: -1, from: null, inFlight: null, timer: null,
+    });
+    messageFind.seq++;
+    messageEl('messageFindInput').value = '';
+    renderMessageFind();
+}
+
+function onMessageFindInput(raw) {
+    if (!messageState.message) return;
+    clearTimeout(messageFind.timer);
+    messageFind.timer = null;
+    messageFind.seq++;                    // any reply still on its way is now stale
+    messageFind.cursor = -1;
+    if (!raw.trim()) {
+        Object.assign(messageFind, { query: raw, hits: null, hitsQuery: null, full: false, failed: false, from: null });
+        renderMessageFind();
+        return;
+    }
+    messageFind.from = messageParagraphReadNow();
+    messageFind.query = raw;
+    messageFind.timer = setTimeout(startMessageFind, MESSAGE_FIND_DELAY_MS);
+    renderMessageFind();                  // the results shown so far are dimmed until the new ones come
+}
+
+// Search for what is in the box now, without waiting for the pause in typing.
+function startMessageFind() {
+    clearTimeout(messageFind.timer);
+    messageFind.timer = null;
+    const seq = messageFind.seq;
+    const promise = runMessageFind(messageFind.query, messageState.message.work.code, seq);
+    messageFind.inFlight = { seq, promise };
+    return promise;
+}
+
+async function runMessageFind(raw, code, seq) {
+    // The words go as typed: a year here is part of the phrase, and a space at
+    // the end says the last word is whole.
+    const params = new URLSearchParams({ q: raw, code, limit: String(MESSAGE_FIND_LIMIT) });
+    let hits = null;
+    let failed = false;
+    try {
+        hits = await fetchMessageJson(`/messages/search?${params}`);
+    } catch (e) {
+        console.error('find in message:', e);
+        failed = true;
+    }
+    if (seq !== messageFind.seq || messageState.message?.work.code !== code) return;
+    messageFind.hits = sortMessageFindHits(hits || []);
+    messageFind.hitsQuery = raw;
+    messageFind.full = (hits || []).length >= MESSAGE_FIND_LIMIT;
+    messageFind.failed = failed;
+    messageFind.cursor = messageFindStart(messageFind.hits, messageFind.from);
+    renderMessageFind();
+}
+
+// In the order they come in the message, the exact phrase first. A paragraph
+// is known by its id, not its number, which a few messages use twice.
+function sortMessageFindHits(hits) {
+    const indexOf = new Map((messageState.message?.paragraphs || []).map((p, i) => [p.id, i]));
+    const rank = (hit) => (hit.group === 'phrase' ? 0 : 1);
+    return hits.filter(hit => indexOf.has(hit.paragraph_id))
+        .map(hit => ({ ...hit, index: indexOf.get(hit.paragraph_id) }))
+        .sort((a, b) => rank(a) - rank(b) || a.index - b.index);
+}
+
+// The paragraph being read: the one at the top of the screen, if the reader's
+// message is the one there, or else the reader's highlight. Not a found place
+// waiting off the screen for Enter, since the preacher is still where the
+// screen is.
+function messageParagraphReadNow() {
+    const live = messageState.live;
+    if (state.liveSlide?.kind === 'message' && live && live.work.code === messageState.message?.work.code) {
+        return live.place.paragraph;
+    }
+    return messageState.highlighted ?? 0;
+}
+
+// Back in the box with words kept from before, the keyboard starts afresh
+// from the paragraph being read now.
+function onMessageFindFocus() {
+    if (messageFind.query.trim()) {
+        messageFind.from = messageParagraphReadNow();
+        if (messageFindFresh()) messageFind.cursor = messageFindStart(messageFind.hits, messageFind.from);
+    }
+    renderMessageFind();
+}
+
+// The keyboard starts on the first result at or after the paragraph being
+// read, among the best results (the exact phrase, if any); the preacher has
+// most likely gone on, not back. Failing that, the first.
+function messageFindStart(hits, from) {
+    if (!hits.length) return -1;
+    const best = hits[0].group === 'phrase';
+    const i = hits.findIndex(hit => (hit.group === 'phrase') === best && hit.index >= (from ?? 0));
+    return i >= 0 ? i : 0;
+}
+
+function messageFindFresh() {
+    return messageFind.hits != null && messageFind.hitsQuery === messageFind.query;
+}
+
+function renderMessageFind() {
+    const box = messageEl('messageFindResults');
+    const open = document.activeElement === messageEl('messageFindInput')
+        && !!messageFind.query.trim() && messageFind.hits != null;
+    box.hidden = !open;
+    if (!open) {
+        box.innerHTML = '';
+        return;
+    }
+    const fresh = messageFindFresh();
+    const note = (text) => `<div class="message-note">${escapeHtml(text)}</div>`;
+    let html = '';
+    if (fresh && messageFind.failed) {
+        html = note('Could not search this message');
+    } else if (fresh && !messageFind.hits.length) {
+        html = note('Not found in this message');
+    } else {
+        if (fresh && messageFind.full) {
+            html += note(`Only the ${MESSAGE_FIND_LIMIT} closest matches are listed. Add a word to narrow it down.`);
+        }
+        messageFind.hits.forEach((hit, i) => {
+            if (i > 0 && hit.group !== 'phrase' && messageFind.hits[i - 1].group === 'phrase') {
+                html += '<div class="message-find-label">With the words apart</div>';
+            }
+            const cursor = fresh && i === messageFind.cursor ? ' cursor' : '';
+            html += `
+                <div class="message-hit message-find-hit${fresh ? '' : ' stale'}${cursor}" data-find="${i}">
+                    <span class="message-hit-ref">¶${escapeHtml(hit.number ?? '')}</span>
+                    <span class="message-hit-text">${messageSnippetHtml(hit.snippet)}</span>
+                </div>`;
+        });
+    }
+    // Nothing to show yet: say, "Not found" for what was typed before, while
+    // the reply for the new words is on its way.
+    box.hidden = !html;
+    box.innerHTML = html;
+    box.querySelector('.message-find-hit.cursor')?.scrollIntoView({ block: 'nearest' });
+}
+
+function moveMessageFindCursor(direction) {
+    if (!messageFindFresh() || !messageFind.hits.length) return;
+    const last = messageFind.hits.length - 1;
+    messageFind.cursor = Math.max(0, Math.min(last, messageFind.cursor + direction));
+    renderMessageFind();
+}
+
+// The result the keyboard is on, waiting for (or starting) the search if the
+// list is for something typed earlier. Null if there is none, or if the box
+// changes meanwhile.
+async function freshMessageFindHit() {
+    if (!messageFind.query.trim() || !messageState.message) return null;
+    const seq = messageFind.seq;
+    if (!messageFindFresh()) {
+        const running = messageFind.inFlight;
+        await (running && running.seq === seq ? running.promise : startMessageFind());
+    }
+    if (seq !== messageFind.seq || !messageFindFresh()) return null;
+    return messageFind.hits[messageFind.cursor] ?? messageFind.hits[0] ?? null;
+}
+
+// Go to a result: the reader's highlight moves to its paragraph, ready for
+// Enter to project it from the line with the words. Nothing is projected, and
+// the message is not fetched again.
+function goToMessageFindHit(hit) {
+    const m = messageState.message;
+    if (!hit || !m || m.paragraphs[hit.index]?.id !== hit.paragraph_id) return false;
+    messageState.highlighted = hit.index;
+    messageState.hitTarget = { paragraphId: hit.paragraph_id, snippet: hit.snippet };
+    markMessageParagraphs();
+    scrollMessageParagraph(hit.index, 'center');
+    return true;
 }
 
 // ---- On the projector -------------------------------------------------------
@@ -715,9 +940,10 @@ function messageSlidePayload(work, paragraphs, win, anchor, { jump = false, clos
 // or as near as the end of the message allows; `part` (0 to 1) of the way on
 // to the next line, where the wheel has left it. The reader's highlight
 // follows the paragraph at the top (or goes to `highlight`), unless
-// `followReader` is false. `roll` says the text is being rolled from where it
-// was, so the reader rolls with it (see rollMessageReader); `close` is for the
-// projector (see messageSlidePayload).
+// `followReader` is false, or the operator has it on a search or find result
+// off the screen (see messageHighlightHeld). `roll` says the text is being
+// rolled from where it was, so the reader rolls with it (see
+// rollMessageReader); `close` is for the projector (see messageSlidePayload).
 //
 // messageState.live: {work, paragraphs, place, part, offset (where its line
 // starts), shown (lines on screen), window (paragraphs sent), screen ({first,
@@ -741,10 +967,11 @@ function showMessagePlace(work, paragraphs, place,
     const anchor = { paragraph: top.paragraph, offset: messageOffsetOf(layout, top) };
     if (partOn) anchor.part = partOn;
     const inReader = followReader && messageState.message?.work.code === work.code;
-    const rollReader = roll && sameMessage && inReader && highlight == null;
+    const held = inReader && sameMessage && highlight == null && messageHighlightHeld(prev.screen);
+    const rollReader = roll && sameMessage && inReader && highlight == null && !held;
     if (rollReader) holdMessageReader(layout);
     messageState.live = { work, paragraphs, place: top, part: partOn, offset: anchor.offset, shown, window: win, screen };
-    if (inReader) messageState.highlighted = highlight ?? top.paragraph;
+    if (inReader && !held) messageState.highlighted = highlight ?? top.paragraph;
     const marks = messageWindowMarks(work.code, win);
     sendSlideToProjector('message', messageSlidePayload(work, paragraphs, win, anchor, { jump, close, marks }),
         elements.messagePreviewFrame, { keepBlank });
@@ -755,7 +982,18 @@ function showMessagePlace(work, paragraphs, place,
         return;
     }
     messageReaderLead = null;
-    if (!sameMarks && inReader) scrollMessageParagraph(messageState.highlighted);
+    if (!sameMarks && inReader && !held) scrollMessageParagraph(messageState.highlighted);
+}
+
+// A search or find result the operator has gone to, off the screen (`screen`,
+// as it was), waits there for Enter while the text on screen rolls, and the
+// reader stays with it rather than rolling along. Once the screen reaches it,
+// or the highlight is moved off it, the highlight follows the screen again.
+function messageHighlightHeld(screen) {
+    const at = messageState.highlighted;
+    const target = messageState.hitTarget;
+    return at != null && !!target && messageState.message?.paragraphs[at]?.id === target.paragraphId
+        && (at < screen.first || at > screen.last);
 }
 
 // ---- The reader rolls with the screen ----------------------------------------
@@ -871,8 +1109,9 @@ function stepLiveMessage(direction, { screen = false, repeat = false, lines = ME
 }
 
 // ↓ / ↑ roll the text on screen a line, unless the operator has the reader's
-// highlight on something else (another message, or a search result off the
-// screen): then they move the highlight, for Enter to project.
+// highlight on something else (another message, or a search or find result off
+// the screen, which stays there while the text rolls): then they move the
+// highlight, for Enter to project.
 function messageReaderElsewhere() {
     if (!messageReaderShown() || messageState.highlighted == null) return false;
     const live = messageState.live;
@@ -1443,6 +1682,35 @@ function initMessageListeners() {
             // Leave the box, so the next Enter projects the paragraph.
             if (await openMessageResult(el)) input.blur();
         }
+    });
+
+    const findInput = messageEl('messageFindInput');
+    findInput.title = `Find in this message (${KEY_GLYPHS.mod}F)`;
+    findInput.addEventListener('input', () => onMessageFindInput(findInput.value));
+    findInput.addEventListener('focus', onMessageFindFocus);
+    findInput.addEventListener('blur', renderMessageFind);
+    findInput.addEventListener('keydown', async (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            moveMessageFindCursor(e.key === 'ArrowDown' ? 1 : -1);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            // Leave the box, so the next Enter projects the paragraph.
+            if (goToMessageFindHit(await freshMessageFindHit())) findInput.blur();
+        } else if (e.key === 'Escape') {
+            // The webview would empty a search box on Escape; the words are
+            // kept for coming back with ⌘F. (The page's own handler still
+            // takes the keyboard out of the box.)
+            e.preventDefault();
+        }
+    });
+    // On mousedown, so the box keeps the keyboard until the result is gone to.
+    messageEl('messageFindResults').addEventListener('mousedown', (e) => {
+        const row = e.target.closest('.message-find-hit');
+        e.preventDefault();
+        if (!row || row.classList.contains('stale')) return;
+        messageFind.cursor = Number(row.dataset.find);
+        if (goToMessageFindHit(messageFind.hits[messageFind.cursor])) findInput.blur();
     });
 
     messageEl('messageContentList').addEventListener('click', async (e) => {

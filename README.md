@@ -96,6 +96,7 @@ without leaving the app. On Windows, `⌘` below is `Ctrl`.
 | `⇧↓` / `⇧↑` | Roll a message on screen a screen at a time (`⇧→` / `⇧←` do too) |
 | Mouse wheel / trackpad | Roll a message on screen like a page: over the reader, the preview or the projector window. With `⌥` held over the reader, scroll the reader alone |
 | `Enter` | Project the highlighted paragraph |
+| `⌘F` | Find in the open message: `↓` / `↑` choose a result, `Enter` goes to it, and `Enter` again projects it |
 | `1`–`9` | Jump to verse 1–9 |
 | `0` | Jump to verse 10 |
 | `PgDn` / `PgUp` | Next / previous item in the open collection |

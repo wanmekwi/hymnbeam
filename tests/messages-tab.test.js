@@ -817,10 +817,12 @@ test('with the reader on something else, the wheel over it scrolls the reader al
     assert.equal(wheelOver('#messageParagraphs', 120), false);
     await app.sleep(40);
     assert.equal(app.projected().length, sent);
+    const readerAt = app.$('#messageParagraphs').scrollTop;
     assert.equal(wheelOver('#messagePreviewSurface', 120), true, 'the preview still rolls the screen');
     await app.sleep(40);
     assert.deepEqual(top(), { paragraph: 1, offset: LINES[0] });
-    assert.equal(highlighted(), '1', 'and the reader is back with the screen');
+    assert.equal(highlighted(), '2', 'and the search result waits for Enter, off the screen');
+    assert.equal(app.$('#messageParagraphs').scrollTop, readerAt, 'the reader stays with it');
 });
 
 // ---- Highlights ----------------------------------------------------------------

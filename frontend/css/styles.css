@@ -2895,7 +2895,8 @@ button.message-show-all:hover {
 }
 
 /* The keyboard's place in the list (↓ / ↑ from the box, Enter opens). */
-.message-result.cursor {
+.message-result.cursor,
+.message-find-hit.cursor {
     background: var(--bg-elevated);
     box-shadow: 0 0 0 1px var(--border-focus) inset;
 }
@@ -2939,6 +2940,51 @@ button.message-show-all:hover {
     padding: 10px 14px;
     font-size: 12px;
     color: var(--text-muted);
+}
+
+/* Find in the open message: a box under the title, with its results
+   dropping down below it while it has the keyboard. */
+.message-find {
+    position: relative;
+    max-width: 420px;
+    margin-top: 10px;
+}
+
+.message-find input {
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.message-find-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 50vh;
+    overflow-y: auto;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    z-index: 50;
+}
+
+.message-find-results[hidden] {
+    display: none;
+}
+
+/* Between the exact-phrase results and those with the words apart. */
+.message-find-label {
+    padding: 6px 14px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
 }
 
 .message-empty {

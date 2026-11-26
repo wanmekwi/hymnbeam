@@ -49,6 +49,7 @@ const SHORTCUT_GROUPS = [
             { keys: ['↓', '/', '↑'], action: 'Roll a message on screen a line (hold to keep it rolling); otherwise move the highlight in the reader' },
             { keys: ['{shift}↓', '/', '{shift}↑'], action: 'Roll a message on screen a screen at a time (Shift with → or ← does too)' },
             { keys: ['Enter'], action: 'Project the highlighted paragraph' },
+            { keys: ['{mod}F'], action: 'Find in the open message: ↓ / ↑ choose a result, Enter goes to it, and Enter again projects it' },
             { keys: ['Drag'], action: 'Across words of the message on screen, in the reader: highlight them on screen. Click a highlight to take it off; Esc takes them all off' },
             { keys: ['1'], action: 'Jump to verse 1–9' , label: '1–9' },
             { keys: ['0'], action: 'Jump to verse 10' },
