@@ -51,6 +51,10 @@ function makeBackend(options) {
         songs: structuredClone(options.songs ?? []),
         collections: structuredClone(options.collections ?? []),
         bible: options.bible ?? { books: [], chapters: {}, search: [] },
+        // The installed message library, or null for none: {status, works,
+        // paragraphs: {code: [{id, number, text}]}}. Tests may swap it, as an
+        // import or removal does.
+        messages: structuredClone(options.messages ?? null),
         settings: structuredClone(options.settings ?? {}),
         trash: structuredClone(options.trash ?? []),
         backups: structuredClone(options.backups ?? []),
@@ -175,6 +179,13 @@ function makeBackend(options) {
             const entry = { id: db.nextId++, item_type: body.item_type || 'song', position: c.songs.length };
             if (entry.item_type === 'bible') Object.assign(entry, { reference: body.reference, title: body.reference });
             else if (entry.item_type === 'logo') entry.title = 'Logo slide';
+            else if (entry.item_type === 'message') {
+                // As the real route does: a reference naming a message, titled by its code and paragraph number.
+                let quote = null;
+                try { quote = JSON.parse(body.reference); } catch { quote = null; }
+                if (!quote || typeof quote.code !== 'string' || !quote.code.trim()) return json({ error: 'bad reference' }, 400);
+                Object.assign(entry, { reference: body.reference, title: Number.isInteger(quote.n) ? `${quote.code} ¶${quote.n}` : quote.code });
+            }
             else {
                 const song = db.songs.find(s => s.id === body.song_id);
                 if (!song) return json({ error: 'no such song' }, 404);
@@ -206,6 +217,22 @@ function makeBackend(options) {
             return verses ? json(verses) : json({ error: 'not found' }, 404);
         }
 
+        if (route === 'GET /messages/status') return json(db.messages ? db.messages.status : { installed: false });
+        if (route.startsWith('GET /messages')) {
+            // Like the real backend, every other message route answers 404 with
+            // a plain-text reason while no library is installed.
+            if (!db.messages) return new Response('No message library is installed', { status: 404 });
+            if (route === 'GET /messages') return json(db.messages.works);
+            if (route === 'GET /messages/search') return json(searchMessages(db.messages, url.searchParams));
+            if ((m = route.match(/^GET \/messages\/([^/]+)$/))) {
+                const code = decodeURIComponent(m[1]);
+                const work = db.messages.works.find(w => w.code === code);
+                return work
+                    ? json({ ...work, paragraphs: db.messages.paragraphs[code] ?? [] })
+                    : new Response(`No message ${code}`, { status: 404 });
+            }
+        }
+
         db.unhandled.push(route);
         return json({ error: 'not handled by the test backend' }, 404);
     }
@@ -213,11 +240,56 @@ function makeBackend(options) {
     return { fetch, db };
 }
 
+// A stand-in for the phrase search: paragraphs holding the words typed as a
+// phrase first, then those holding all of them; the year and kind filters as
+// the real search applies them; the first word marked in the snippet with the
+// same private-use characters. Like the real snippet, a long paragraph's is
+// cut to 16 words around the match, with '…' where words were left out.
+function searchMessages(library, params) {
+    const q = (params.get('q') || '').toLowerCase().trim();
+    const words = q.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    if (!words.length) return [];
+    const from = params.has('from') ? Number(params.get('from')) : null;
+    const to = params.has('to') ? Number(params.get('to')) : null;
+    const kind = params.get('kind');
+    const code = params.get('code');
+    const limit = Number(params.get('limit') || 20);
+    // As the real backend names them: the words as a phrase, then all of them anywhere.
+    const groups = { phrase: [], all: [] };
+    for (const work of library.works) {
+        if (kind && kind !== 'all' && work.kind !== kind) continue;
+        if (code && work.code !== code) continue;
+        if (from != null && !(work.year >= from)) continue;
+        if (to != null && !(work.year <= to)) continue;
+        for (const p of library.paragraphs[work.code] ?? []) {
+            const text = p.text.toLowerCase();
+            const group = text.includes(q) ? 'phrase'
+                : words.every(w => text.includes(w)) ? 'all' : null;
+            if (!group) continue;
+            const at = text.indexOf(words[0]);
+            const marked = p.text.slice(0, at) + '\uE000' + p.text.slice(at, at + words[0].length) +
+                '\uE001' + p.text.slice(at + words[0].length);
+            const tokens = marked.split(' ');
+            const hitWord = tokens.findIndex(t => t.includes('\uE000'));
+            const first = Math.max(0, Math.min(hitWord - 4, tokens.length - 16));
+            const snippet = (first > 0 ? '…' : '') + tokens.slice(first, first + 16).join(' ') +
+                (first + 16 < tokens.length ? '…' : '');
+            groups[group].push({
+                group, paragraph_id: p.id, code: work.code, number: p.number, title: work.title,
+                kind: work.kind, chapter: work.chapter ?? null, location: work.location ?? null,
+                year: work.year ?? null, snippet, score: -1,
+            });
+        }
+    }
+    return [...groups.phrase, ...groups.all].slice(0, limit);
+}
+
 // Stand-in for window.__TAURI__. Records every command the UI invokes;
 // `commands` supplies results for the ones that return data (imports and the
 // like), given the arguments and the backend state.
 function makeTauri({ version = '0.5.1', updater = null, commands = {} } = {}, db) {
     const invokes = [];
+    const emitted = [];
     const listeners = new Map();
     const relaunches = [];
     const closed = [];
@@ -239,6 +311,10 @@ function makeTauri({ version = '0.5.1', updater = null, commands = {} } = {}, db
                 listeners.set(name, fn);
                 return () => listeners.delete(name);
             },
+            // A webview → app event, as the projector window sends its size.
+            async emit(name, payload) {
+                emitted.push({ name, payload: JSON.parse(JSON.stringify(payload ?? null)) });
+            },
         },
         window: { getCurrent: () => ({ close() { closed.push(Date.now()); } }) },
         process: { async relaunch() { relaunches.push(Date.now()); } },
@@ -246,7 +322,7 @@ function makeTauri({ version = '0.5.1', updater = null, commands = {} } = {}, db
     if (updater) tauri.updater = updater;
 
     return {
-        tauri, invokes, relaunches, closed,
+        tauri, invokes, relaunches, closed, emitted,
         // Fire a backend → webview event, e.g. a menu item or 'projector-closed'.
         emit(name, payload) {
             const fn = listeners.get(name);
@@ -367,6 +443,10 @@ function openPage(page, backend, bridge, { tauri = true } = {}) {
  * @param {Array}  [options.songs]        full songs ({id, title, verses:[{label, text}], ...})
  * @param {Array}  [options.collections]  full collections ({id, name, songs:[entries]})
  * @param {object} [options.bible]        {books: [...], chapters: {'GEN/1': [{verse, text}]}}
+ * @param {object} [options.messages]     installed message library: {status, works, paragraphs}
+ * @param {object} [options.messageMeasure] {metrics(settings), lines(text, settings)}: stands in for
+ *                                        the measuring copy of the projector page, which jsdom cannot
+ *                                        lay out (without it, the app guesses lines by length)
  * @param {object} [options.updater]      stand-in for window.__TAURI__.updater
  * @param {object} [options.latestRelease] body returned by the GitHub releases API (null = offline)
  * @param {string} [options.version]      what get_app_version reports
@@ -383,6 +463,18 @@ async function bootApp(options = {}) {
     const bridge = makeTauri(options, backend.db);
     const page = openPage('index.html', backend, bridge);
     const { window, until, settle, sleep } = page;
+    const measured = [];
+    if (options.messageMeasure) {
+        let prepared = null;
+        window.document.getElementById('messageMeasureFrame').contentWindow.messageMeasure = {
+            prepare(settings, footer) {
+                prepared = JSON.parse(JSON.stringify(settings));
+                measured.push({ footer, fontPct: settings.message.fontPct });
+            },
+            metrics: () => options.messageMeasure.metrics(prepared),
+            lines: (text) => options.messageMeasure.lines(text, prepared),
+        };
+    }
 
     // Start-up is finished once the song list request has been answered.
     // (`started: false` skips the wait, for tests about start-up going wrong.)
@@ -401,6 +493,8 @@ async function bootApp(options = {}) {
         unhandledRequests: backend.db.unhandled,
         invokes: bridge.invokes,
         relaunches: bridge.relaunches,
+        /** What the measuring copy was prepared for: [{footer, fontPct}], oldest first. */
+        measured,
         emit: bridge.emit,
         toast: () => window.document.getElementById('toast').textContent,
 
@@ -463,6 +557,8 @@ async function bootProjector(options = {}) {
         ...page,
         backend: backend.db,
         closed: bridge.closed,
+        /** Events the page sent to the app, e.g. its size: [{name, payload}]. */
+        emitted: bridge.emitted,
         /** Deliver an event the way the Rust side does: a JSON string payload. */
         async send(event, payload = {}) {
             await bridge.emit(event, JSON.stringify(payload));

@@ -2,7 +2,7 @@
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { bootApp } = require('./helpers/boot');
-const { songs, bible, amazingGrace, holyHolyHoly, blessedAssurance, sundayService } = require('./helpers/fixtures');
+const { songs, bible, amazingGrace, holyHolyHoly, blessedAssurance, sundayService, messageLibrary } = require('./helpers/fixtures');
 
 let app;
 afterEach(() => app?.close());
@@ -230,14 +230,20 @@ test('going back to the list forgets the position', async () => {
 });
 
 test('the sidebar tabs can be reached from the keyboard', async () => {
-    app = await bootApp({ songs, bible });
+    // With a message library installed, so that its tab is shown.
+    app = await bootApp({ songs, bible, messages: messageLibrary });
+    await app.until(() => !app.$('#messagesTabBtn').classList.contains('hidden'), 'the message tab');
     const activeTab = () => app.$('.sidebar-tab.active').id;
     await app.press('2', { ctrlKey: true });
     assert.equal(activeTab(), 'collectionsTabBtn');
     await app.press('3', { ctrlKey: true });
     assert.equal(activeTab(), 'bibleTabBtn');
+    await app.press('4', { ctrlKey: true });
+    assert.equal(activeTab(), 'messagesTabBtn');
     await app.press(']');
     assert.equal(activeTab(), 'libraryTabBtn', '] wraps round from the last tab');
+    await app.press('[');
+    assert.equal(activeTab(), 'messagesTabBtn');
     await app.press('[');
     assert.equal(activeTab(), 'bibleTabBtn');
     await app.press('1', { ctrlKey: true });

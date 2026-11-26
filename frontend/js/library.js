@@ -315,6 +315,7 @@ function setContentView(view) {
     elements.contentPlaceholder.hidden = view !== 'placeholder';
     elements.songDisplay.hidden = view !== 'song';
     elements.bibleDisplay.hidden = view !== 'bible';
+    elements.messageDisplay.hidden = view !== 'message';
     // A preview pane only has layout once its view is shown; rescale now so the
     // just-revealed pane (esp. the Bible preview) fills its slot instead of
     // rendering at the fallback scale(0.1) in the top-left corner.

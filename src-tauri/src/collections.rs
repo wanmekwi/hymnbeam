@@ -77,6 +77,10 @@ pub fn get_collection(collection_id: i64) -> Result<Option<Collection>, String> 
             // Display title depends on the entry kind.
             let title = match item_type.as_str() {
                 "bible" => reference.clone().unwrap_or_default(),
+                "message" => reference
+                    .as_deref()
+                    .and_then(message_quote_title)
+                    .unwrap_or_else(|| reference.clone().unwrap_or_default()),
                 "logo" => "Logo slide".to_string(),
                 _ => song_title.unwrap_or_default(),
             };
@@ -134,7 +138,25 @@ pub fn delete_collection(collection_id: i64) -> Result<bool, String> {
     Ok(rows_deleted > 0)
 }
 
-// Appends any kind of entry (song / bible / logo) to the end of a collection.
+// A prepared sermon quote is stored by reference only, never its text: a
+// small JSON object the front end writes and reads (see messageQuoteNow in
+// frontend/js/messages.js), naming the message by its code and the paragraph
+// by its place and number ("n"). Its title here is the code and paragraph
+// number, e.g. "50-0101 ¶4"; the front end shows the message's own title
+// from the library when it has one. None if it names no message.
+pub fn message_quote_title(reference: &str) -> Option<String> {
+    let quote: serde_json::Value = serde_json::from_str(reference).ok()?;
+    let code = quote.get("code")?.as_str()?.trim();
+    if code.is_empty() {
+        return None;
+    }
+    Some(match quote.get("n").and_then(|n| n.as_i64()) {
+        Some(n) => format!("{} \u{b6}{}", code, n),
+        None => code.to_string(),
+    })
+}
+
+// Appends any kind of entry (song / bible / logo / message) to the end of a collection.
 pub fn add_item_to_collection(
     collection_id: i64,
     item_type: &str,
@@ -272,6 +294,31 @@ mod tests {
         let c = get_collection(cid).unwrap().unwrap();
         assert_eq!(c.songs.len(), 1);
         assert_eq!(c.songs[0].item_type, "logo");
+    }
+
+    #[test]
+    fn a_sermon_quote_is_kept_by_reference_and_titled_by_its_code_and_paragraph() {
+        let _db = setup_temp_db();
+        let cid = create_collection("Evening").unwrap();
+        let reference = r#"{"v":1,"code":"50-0101","at":3,"n":4,"offset":12}"#;
+        add_item_to_collection(cid, "message", None, Some(reference)).unwrap();
+        add_item_to_collection(cid, "message", None, Some(r#"{"v":1,"code":"BK-01","at":0}"#)).unwrap();
+
+        let c = get_collection(cid).unwrap().unwrap();
+        assert_eq!(c.songs.len(), 2);
+        assert_eq!(c.songs[0].item_type, "message");
+        assert_eq!(c.songs[0].reference.as_deref(), Some(reference), "kept as written");
+        assert_eq!(c.songs[0].title, "50-0101 \u{b6}4");
+        assert_eq!(c.songs[0].song_id, None);
+        assert_eq!(c.songs[1].title, "BK-01", "no paragraph number: the code alone");
+    }
+
+    #[test]
+    fn a_sermon_quote_title_needs_a_code() {
+        assert_eq!(message_quote_title(r#"{"code":"60-0202E","n":7}"#).as_deref(), Some("60-0202E \u{b6}7"));
+        for reference in ["", "60-0202E:7", "[]", r#"{"n":7}"#, r#"{"code":""}"#, r#"{"code":7}"#] {
+            assert_eq!(message_quote_title(reference), None, "{}", reference);
+        }
     }
 }
 

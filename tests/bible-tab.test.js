@@ -178,3 +178,87 @@ test('returning to a song after scripture puts the song back on screen', async (
     assert.equal(app.onScreen().isBible, undefined);
     assert.equal(app.$('#bibleDisplay').hidden, true);
 });
+
+// Blank, logo and reopening the projector re-send whatever is live. While a
+// verse is live that is the verse, not the song that was open before it.
+const blankBtnOn = () => app.$('#blankBtn').classList.contains('active');
+
+test('Space blanks a verse and Space again brings back the verse, not the song', async () => {
+    await openBible();
+    await app.click('#libraryTabBtn');
+    await app.openSong(amazingGrace.id);
+    await app.click('#bibleTabBtn');
+    await openChapter('43N', 3);
+    await app.click('#bibleVerseGrid .verse-card[data-verse="16"]');
+
+    await app.press(' ');
+    assert.equal(app.onScreen().isBlank, true);
+    assert.equal(app.onScreen().isBible, true);
+    assert.equal(blankBtnOn(), true);
+
+    await app.press(' ');
+    assert.equal(app.onScreen().isBlank, false);
+    assert.equal(app.onScreen().title, 'John 3:16');
+    assert.equal(app.onScreen().text, 'For God so loved the world');
+});
+
+test('Space blanks a verse when no song has been opened', async () => {
+    await openBible();
+    await openChapter('43N', 3);
+    await app.click('#bibleVerseGrid .verse-card[data-verse="16"]');
+    const sent = app.projected().length;
+    await app.press(' ');
+    assert.equal(app.projected().length, sent + 1);
+    assert.equal(app.onScreen().isBlank, true);
+});
+
+test('projecting a verse over a blank screen shows it and turns Blank off', async () => {
+    await openBible();
+    await openChapter('43N', 3);
+    await app.press(' ');
+    assert.equal(blankBtnOn(), true);
+    await app.click('#bibleVerseGrid .verse-card[data-verse="16"]');
+    assert.equal(app.onScreen().isBlank, false);
+    assert.equal(app.onScreen().title, 'John 3:16');
+    assert.equal(app.state('isBlank'), false);
+    assert.equal(blankBtnOn(), false);
+
+    await app.press(' ');                       // so the next Space blanks it
+    assert.equal(app.onScreen().isBlank, true);
+});
+
+test('the logo coming down leaves the verse on screen', async () => {
+    await openBible();
+    await app.click('#libraryTabBtn');
+    await app.openSong(amazingGrace.id);
+    await app.click('#bibleTabBtn');
+    await openChapter('43N', 3);
+    await app.click('#bibleVerseGrid .verse-card[data-verse="16"]');
+    await app.press('l');
+    await app.press('l');
+    assert.equal(app.onScreen().title, 'John 3:16');
+});
+
+test('reopening the projector puts the live verse back up', async () => {
+    await openBible();
+    await openChapter('43N', 3);
+    await app.click('#bibleVerseGrid .verse-card[data-verse="16"]');
+    await app.press('p');                       // close
+    await app.until(() => app.state('projectorOpen') === false, 'the projector to close');
+    const sent = app.projected().length;
+    await app.openProjector();
+    assert.equal(app.projected().length, sent + 1);
+    assert.equal(app.onScreen().title, 'John 3:16');
+});
+
+test('once a song is back on screen, blank and unblank restore the song', async () => {
+    await openBible();
+    await openChapter('43N', 3);
+    await app.click('#bibleVerseGrid .verse-card[data-verse="16"]');
+    await app.click('#libraryTabBtn');
+    await app.openSong(amazingGrace.id);
+    await app.press(' ');
+    await app.press(' ');
+    assert.equal(app.onScreen().title, 'Amazing Grace');
+    assert.equal(app.onScreen().isBible, undefined);
+});

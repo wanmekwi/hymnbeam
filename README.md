@@ -63,7 +63,7 @@ Windows installers ship with releases from **v0.1.5** onwards.
 - **Multi-monitor routing** — automatically sends the projector window to a secondary display.
 - **KJV Bible integration** — browse books, chapters, and verses; project any passage with the same keyboard-first workflow as songs. Translator-added words shown in italics.
 - **Reference lookup** — type any common abbreviation or variation (`Ecc 9:11`, `ec 9 11`, `ecclesiastes 9:11`) and HymnBeam resolves it to the right verse.
-- **Order of service** — build a collection from songs, Bible passages, and logo slides in one ordered list, then drive the whole service through it with a single keystroke.
+- **Order of service** — build a collection from songs, Bible passages, logo slides and, with a message library installed, prepared quotes (a place in a message, with its highlights, added from the reader) in one ordered list, then drive the whole service through it with a single keystroke.
 - **Next-slide preview** — the operator always sees what the next advance will project, alongside what's on screen now.
 - **Logo / holding slide** — show the church logo (or a plain themed slide) for pre-service and transitions, separate from blanking.
 - **Announcement banner** — flash a one-line alert (e.g. a nursery call) over whatever is projected, with optional auto-clear.
@@ -91,14 +91,20 @@ without leaving the app. On Windows, `⌘` below is `Ctrl`.
 
 | Key | Action |
 |-----|--------|
-| `→` / `←` | Next / previous verse |
+| `→` / `←` | Next / previous verse, or roll a message on screen three lines (hold to keep it rolling) |
+| `↓` / `↑` | Roll a message on screen a line (hold to keep it rolling); otherwise move the highlight in the reader |
+| `⇧↓` / `⇧↑` | Roll a message on screen a screen at a time (`⇧→` / `⇧←` do too) |
+| Mouse wheel / trackpad | Roll a message on screen like a page: over the reader, the preview or the projector window. With `⌥` held over the reader, scroll the reader alone |
+| `Enter` | Project the highlighted paragraph |
+| `⌘F` | Find in the open message: `↓` / `↑` choose a result, `Enter` goes to it, and `Enter` again projects it |
 | `1`–`9` | Jump to verse 1–9 |
 | `0` | Jump to verse 10 |
 | `PgDn` / `PgUp` | Next / previous item in the open collection |
 | `.` / `,` | Same, without reaching for the page keys |
 | `Space` | Blank / unblank screen |
 | `L` | Show / hide logo slide |
-| `Escape` | Close dialog, clear alert, or clear display — in that order |
+| Drag across words | In the reader, on the message on screen: highlight those words on the projector. Click a highlight to take it off |
+| `Escape` | Close dialog, clear alert, take off a message's highlights, or clear display — in that order |
 
 **Projector**
 
@@ -122,7 +128,7 @@ without leaving the app. On Windows, `⌘` below is `Ctrl`.
 | Key | Action |
 |-----|--------|
 | `/` | Search the song library |
-| `⌃1` / `⌃2` / `⌃3` | Library / Collections / Bible tab |
+| `⌃1` / `⌃2` / `⌃3` / `⌃4` | Library / Collections / Bible / message tab (shown once a message library is imported under Settings → Library) |
 | `[` / `]` | Previous / next sidebar tab |
 | `?` | Show the shortcut list |
 

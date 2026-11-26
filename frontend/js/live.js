@@ -93,13 +93,55 @@ function updatePreview(_text) {
     updateNextPreview();
 }
 
+// The song's current verse goes on screen, replacing whatever Bible verse or
+// message paragraph was live.
 async function sendToProjector() {
+    state.liveSlide = null;
     updatePreview();
-    if (!state.projectorOpen || !state.currentSong) return;
+    await postToProjector(buildProjectorPayload());
+}
 
-    const payload = buildProjectorPayload();
-    if (!payload) return;
+// A Bible verse or message paragraph goes on screen. `previewFrame` is the
+// preview pane of the view it was projected from.
+//
+// It is remembered so that blank, logo and the projector opening re-send it
+// rather than the song, which would otherwise come back over it.
+//
+// Choosing a slide over a blank screen shows it, as it always has for Bible
+// verses; `keepBlank` is for stepping on with the arrow keys, which, as with
+// a song's verses, leaves a blank screen blank.
+function sendSlideToProjector(kind, payload, previewFrame, { keepBlank = false } = {}) {
+    state.liveSlide = { kind, payload, previewFrame };
+    // The Blank button must agree with the screen, or the next Space would
+    // seem to do nothing.
+    if (state.isBlank && !keepBlank) {
+        state.isBlank = false;
+        syncScreenStateButtons();
+    }
+    postLiveSlide();
+}
 
+function postLiveSlide() {
+    const { payload, previewFrame } = state.liveSlide;
+    const shown = state.isBlank ? { ...payload, text: '', isBlank: true } : payload;
+    if (previewsEnabled() && previewFrame && previewFrame.contentWindow) {
+        previewFrame.contentWindow.postMessage({ type: 'update-lyrics', ...shown }, '*');
+        // In the song view's pane (a collection's Bible entry), the Next pane
+        // would still show the song's next verse.
+        if (previewFrame === elements.previewFrame) clearNextPreview();
+    }
+    postToProjector(shown);
+}
+
+// Put whatever is live back on screen, after blank, logo or the projector
+// opening changed what the screen should show.
+function resendLive() {
+    if (state.liveSlide) postLiveSlide();
+    else sendToProjector();
+}
+
+async function postToProjector(payload) {
+    if (!state.projectorOpen || !payload) return;
     try {
         if (window.__TAURI__) {
             await window.__TAURI__.core.invoke('send_to_projector', {
@@ -151,7 +193,7 @@ async function toggleProjector() {
                 state.projectorOpen = true;
                 setProjectorButton(true);
                 setTimeout(() => {
-                    sendToProjector();
+                    resendLive();
                     pushSettingsToProjector();
                     sendLogoState();
                     resendAlertState();
@@ -186,7 +228,7 @@ function toggleBlank() {
     if (state.isBlank && state.showLogo) state.showLogo = false;
     syncScreenStateButtons();
     updatePreview(state.currentSong?.verses[state.currentVerseIndex]?.text || '');
-    sendToProjector();
+    resendLive();
     sendLogoState();
 }
 
@@ -195,7 +237,7 @@ function toggleLogo() {
     if (state.showLogo && state.isBlank) state.isBlank = false;
     syncScreenStateButtons();
     updatePreview();
-    sendToProjector();
+    resendLive();
     sendLogoState();
 }
 

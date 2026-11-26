@@ -91,6 +91,9 @@
                     <button type="button" class="sidebar-tab active" id="libraryTabBtn">Library</button>
                     <button type="button" class="sidebar-tab" id="collectionsTabBtn">Collections</button>
                     <button type="button" class="sidebar-tab" id="bibleTabBtn">Bible</button>
+                    <!-- Named by the installed message library (see messages.js) -->
+                    <!-- Shown only once a message library is imported (see messages.js). -->
+                    <button type="button" class="sidebar-tab hidden" id="messagesTabBtn">Sermons</button>
                 </div>
 
                 <!-- Library panel -->
@@ -200,14 +203,14 @@
                             </div>
                         </div>
                         <div class="collection-nav-bar">
-                            <button type="button" class="btn btn-secondary btn-small" id="collectionPrevBtn" title="Previous song">
+                            <button type="button" class="btn btn-secondary btn-small" id="collectionPrevBtn" title="Previous item (PageUp or ,)">
                                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M10 3L4 8l6 5"/>
                                 </svg>
                                 Prev
                             </button>
                             <span class="collection-position" id="collectionPosition">—</span>
-                            <button type="button" class="btn btn-secondary btn-small" id="collectionNextBtn" title="Next song">
+                            <button type="button" class="btn btn-secondary btn-small" id="collectionNextBtn" title="Next item (PageDown or .)">
                                 Next
                                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M6 3l6 5-6 5"/>
@@ -235,6 +238,17 @@
 
                     <div class="song-list" id="bibleContentList"></div>
 
+                </div>
+
+                <!-- Message library panel -->
+                <div class="sidebar-panel hidden" id="messagesPanel">
+                    <div class="bible-search-bar">
+                        <input type="search" id="messageSearchInput"
+                               placeholder="Phrase, title, date or code…" autocomplete="off"
+                               aria-label="Find a message"/>
+                    </div>
+                    <div class="song-list" id="messageContentList"></div>
+                    <div class="message-library-footer" id="messageLibraryFooter" hidden></div>
                 </div>
             </aside>
 
@@ -370,6 +384,57 @@
                         </div>
                     </div>
                     <div class="lyrics-grid" id="bibleVerseGrid"></div>
+                </div>
+
+                <div class="bible-display message-display" id="messageDisplay" hidden>
+                    <div class="song-top-row">
+                        <div class="song-meta">
+                            <h1 class="song-title" id="messageDisplayTitle"></h1>
+                            <p class="song-author" id="messageDisplaySubtitle"></p>
+                            <!-- Find in this message: for when the preacher skips ahead in it. -->
+                            <div class="message-find">
+                                <input type="search" id="messageFindInput"
+                                       placeholder="Find in this message…" autocomplete="off"
+                                       aria-label="Find in this message"/>
+                                <div class="message-find-results" id="messageFindResults" hidden></div>
+                            </div>
+                        </div>
+                        <div class="song-actions">
+                            <div class="add-to-collection-wrapper">
+                                <button type="button" class="btn btn-icon" id="messageAddToCollectionBtn" title="Add to a collection: the text as it is on screen, with its highlights, or the highlighted paragraph">
+                                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M3 6h14M3 10h14M3 14h8"/>
+                                        <circle cx="16" cy="14" r="3"/>
+                                        <path d="M16 12.5v3M14.5 14h3"/>
+                                    </svg>
+                                </button>
+                                <div class="collection-picker" id="messageCollectionPicker">
+                                    <div class="collection-picker-list" id="messageCollectionPickerList"></div>
+                                    <button type="button" class="collection-picker-new" id="messageCollectionPickerNew">
+                                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M8 3v10M3 8h10"/>
+                                        </svg>
+                                        New collection
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="preview-area">
+                            <button type="button" class="preview-layout-toggle" id="messagePreviewToggle" aria-label="Toggle preview"></button>
+                            <div class="preview-container" id="messagePreviewContainer">
+                                <div class="preview-label">Preview</div>
+                                <div class="preview-window">
+                                    <iframe class="preview-frame" id="messagePreviewFrame"
+                                            src="projector.html" title="Projector preview"></iframe>
+                                    <!-- Takes the mouse wheel, which would otherwise go to the
+                                         preview's own page, to scroll the message on screen. -->
+                                    <div class="preview-scroll-surface" id="messagePreviewSurface"
+                                         title="Scroll to roll the text on screen"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="lyrics-grid message-paragraphs" id="messageParagraphs"></div>
                 </div>
             </section>
         </main>
@@ -612,6 +677,7 @@ Second verse lyrics..."></textarea>
                         <div class="segmented" id="setDisplayTarget">
                             <button type="button" data-value="song" class="active">Songs</button>
                             <button type="button" data-value="bible">Bible</button>
+                            <button type="button" data-value="message" id="setDisplayTargetMessage" class="hidden">Sermons</button>
                         </div>
                         <div class="bible-target-options hidden" id="bibleTargetOptions">
                             <label class="toggle-inline" for="setBibleSameAsSongs">
@@ -619,6 +685,13 @@ Second verse lyrics..."></textarea>
                                 <span>Use same display as songs</span>
                             </label>
                             <button type="button" class="btn btn-secondary btn-small hidden" id="bibleMatchSongBtn">Match song settings</button>
+                        </div>
+                        <div class="bible-target-options hidden" id="messageTargetOptions">
+                            <label class="toggle-inline" for="setMessageSameAsBible">
+                                <input type="checkbox" id="setMessageSameAsBible" class="toggle" checked>
+                                <span>Use same display as Bible</span>
+                            </label>
+                            <button type="button" class="btn btn-secondary btn-small hidden" id="messageMatchBibleBtn">Match Bible settings</button>
                         </div>
                     </div>
                     <div class="settings-panel active" data-panel="typography">
@@ -710,23 +783,40 @@ Second verse lyrics..."></textarea>
                     </div>
 
                     <div class="settings-panel" data-panel="layout">
-                        <div class="form-group toggle-group">
-                            <label for="setShowTitleBar">Show song title bar</label>
-                            <input type="checkbox" id="setShowTitleBar" class="toggle" checked>
+                        <div class="form-group message-own-setting hidden" id="messageFontGroup">
+                            <label for="setMessageFont">Text size: <span class="value-readout" id="setMessageFontValue">4.5%</span></label>
+                            <input type="range" id="setMessageFont" min="2.5" max="8" step="0.25" value="4.5">
+                            <span class="form-hint">Of the screen's height. The text rolls up the screen like a page: scroll with the mouse wheel or trackpad over the paragraphs, the preview or the projector window. ↓ and ↑ roll it a line, → and ← three lines (with Shift, a screen); hold one to keep it rolling.</span>
+                        </div>
+                        <div class="form-group message-own-setting hidden" id="messageDetailsGroup">
+                            <label>Sermon details</label>
+                            <div class="segmented" id="setMessageDetailsPosition">
+                                <button type="button" data-value="top" class="active">Top</button>
+                                <button type="button" data-value="bottom">Bottom</button>
+                            </div>
+                            <span class="form-hint">The title, date code and place (for the book, the chapter and the book's name), at the top or the foot of the screen.</span>
+                        </div>
+                        <div class="form-group toggle-group message-own-setting hidden" id="messageDetailsCapsGroup">
+                            <label for="setMessageDetailsCaps">Sermon details in capitals</label>
+                            <input type="checkbox" id="setMessageDetailsCaps" class="toggle" checked>
                         </div>
                         <div class="form-group toggle-group">
+                            <label for="setShowTitleBar" id="setShowTitleBarLabel">Show song title bar</label>
+                            <input type="checkbox" id="setShowTitleBar" class="toggle" checked>
+                        </div>
+                        <div class="form-group toggle-group song-layout-setting">
                             <label for="setShowMetaBar">Show meta bar (#, key, author)</label>
                             <input type="checkbox" id="setShowMetaBar" class="toggle" checked>
                         </div>
-                        <div class="form-group toggle-group">
+                        <div class="form-group toggle-group song-layout-setting">
                             <label for="setShowVerseLabel">Show verse label (Verse 1, Chorus…)</label>
                             <input type="checkbox" id="setShowVerseLabel" class="toggle">
                         </div>
-                        <div class="form-group toggle-group">
+                        <div class="form-group toggle-group song-layout-setting">
                             <label for="setAutoBreakLines">Auto-break long lines</label>
                             <input type="checkbox" id="setAutoBreakLines" class="toggle" checked>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group song-layout-setting">
                             <span class="form-hint">Splits overly long lines at punctuation or phrase boundaries when that lets the whole verse display larger.</span>
                         </div>
                         <div class="form-group">
@@ -778,6 +868,18 @@ Second verse lyrics..."></textarea>
                             <ul class="library-list" id="duplicateList"></ul>
                         </div>
 
+                        <div class="library-section" id="messageLibrarySection">
+                            <div class="library-section-header">
+                                <h3>Message Library</h3>
+                                <div class="library-section-actions">
+                                    <button type="button" class="btn btn-secondary btn-small hidden" id="settingsMessageRemoveBtn">Remove</button>
+                                    <button type="button" class="btn btn-secondary btn-small" id="settingsMessageImportBtn">Import…</button>
+                                </div>
+                            </div>
+                            <span class="form-hint" id="settingsMessageLibraryHint"></span>
+                            <span class="message-import-progress" id="settingsMessageImportProgress"></span>
+                        </div>
+
                         <div class="library-section">
                             <div class="library-section-header">
                                 <h3>Song Source</h3>
@@ -811,7 +913,15 @@ Second verse lyrics..."></textarea>
     </div>
 
     <!-- Plain scripts sharing one global scope. Order matters only for code
-         that runs at load time: core.js first, app.js (which boots) last. -->
+         that runs at load time: message-scroll.js (whose sizes core.js reads)
+         and core.js first, app.js (which boots) last. -->
+    <!-- A hidden copy of the projector page that a message's lines are
+         measured in (see message-scroll.js). Laid out but never seen, so it
+         measures even while every preview is hidden. -->
+    <iframe class="measure-frame" id="messageMeasureFrame" src="projector.html?measure"
+            tabindex="-1" aria-hidden="true" title=""></iframe>
+
+    <script src="js/message-scroll.js"></script>
     <script src="js/core.js"></script>
     <script src="js/library.js"></script>
     <script src="js/live.js"></script>
@@ -822,6 +932,8 @@ Second verse lyrics..."></textarea>
     <script src="js/collections.js"></script>
     <script src="js/settings.js"></script>
     <script src="js/bible.js"></script>
+    <script src="js/messages-find.js"></script>
+    <script src="js/messages.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

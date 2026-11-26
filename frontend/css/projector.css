@@ -45,7 +45,8 @@ body {
     display: none;
 }
 
-.projector.bible-mode .lyrics-text {
+.projector.bible-mode .lyrics-text,
+.projector.message-mode .lyrics-text {
     white-space: normal;
     word-break: break-word;
     width: 82vw;
@@ -394,4 +395,161 @@ body {
 .projector.transition-fade .lyrics-text.entering,
 .projector.transition-cut .lyrics-text.entering {
     animation: none;
+}
+
+/* A message: prose like scripture, with no title bar, in one column that
+ * scrolls. Its details (the title, date code and place) sit in the meta bar,
+ * which is always laid out in this mode and takes its own room at the foot of
+ * the screen (or the top: see message-details-top below), rather than lying
+ * over the text, so the text has the rest of the screen to itself even when a
+ * long title wraps onto a second line. */
+.projector.message-mode .song-title-bar {
+    display: none;
+}
+
+.meta-col-message {
+    display: none;
+}
+
+.projector.message-mode .song-meta-bar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: baseline;
+    column-gap: 24px;
+    position: relative;
+    align-self: stretch;
+    flex-shrink: 0;
+    margin: 0 calc(-1 * var(--safe-area)) calc(-1 * var(--safe-area));
+}
+
+.projector.message-mode .meta-col-nav,
+.projector.message-mode .meta-col-author {
+    display: none;
+}
+
+.projector.message-mode .meta-col-message {
+    display: contents;
+}
+
+.message-footer-text {
+    grid-column: 2;
+    text-align: center;
+    font-weight: 600;
+    min-width: 0;
+}
+
+/* The text is shown in the space between the top of the screen and the
+ * footer, from the line at the top of the screen down. Lines above it are
+ * hidden, and so is any line that would not fit whole at the foot: the
+ * projector sets --message-cut to the space left under the last whole line. */
+.projector.message-mode .lyrics-container {
+    align-self: stretch;
+    align-items: flex-start;
+    overflow: hidden;
+    min-height: 0;
+    margin-top: clamp(16px, 5vh, 72px);
+    margin-bottom: 24px;
+    -webkit-clip-path: inset(0 0 var(--message-cut, 0px) 0);
+    clip-path: inset(0 0 var(--message-cut, 0px) 0);
+}
+
+.projector.message-mode .lyrics-stack {
+    align-self: flex-start;
+}
+
+/* Moved by the projector a frame at a time (see Gliding in message-scroll.js),
+ * so it is kept as a layer of its own and only ever slid, not drawn afresh. */
+.message-column {
+    will-change: transform;
+}
+
+.message-para {
+    margin: 0;
+    position: relative;
+}
+
+/* A paragraph's number, small and faint in the margin beside its first line.
+ * It is drawn from an attribute, outside the text and its flow, so lines
+ * break and are counted exactly as without it. The box is the size of a line
+ * of the paragraph, so the number sits level with the first line, and it is
+ * drawn at about half size from its right-hand edge. */
+.message-para[data-number]::before {
+    content: attr(data-number);
+    position: absolute;
+    top: 0;
+    right: 100%;
+    margin-right: 0.45em;
+    transform: scale(0.55);
+    transform-origin: right center;
+    opacity: 0.55;
+    font-style: normal;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.message-para + .message-para {
+    margin-top: 0.5em;
+}
+
+/* The message's details at the top of the screen (the default): the bar comes
+ * first, taking its room above the text, with its rule drawn under it, and
+ * the larger gap moves to the foot. */
+.projector.message-mode.message-details-top .song-meta-bar {
+    order: -1;
+    margin: calc(-1 * var(--safe-area)) calc(-1 * var(--safe-area)) 0;
+    padding: 24px 48px 20px;
+}
+
+.projector.message-mode.message-details-top .song-meta-bar::before {
+    top: auto;
+    bottom: 0;
+}
+
+.projector.message-mode.message-details-top .lyrics-container {
+    margin-top: 24px;
+    margin-bottom: clamp(16px, 5vh, 72px);
+}
+
+/* In capitals (the default), a little spaced, as a heading. */
+.projector.message-mode.message-details-caps .message-footer-text {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* "Show the title" off hides the words but keeps their space, so turning it
+ * on or off does not change how many lines fit. */
+.projector.message-mode.layout-hide-title .message-footer-text {
+    visibility: hidden;
+}
+
+/* Words the operator has highlighted: colour behind them, as a highlighter
+ * pen leaves, in the text's own colour. It must take no room (no padding or
+ * border), so that lines break exactly as without it; the little it spreads
+ * past the words is a shadow. One just made fades in. */
+.projector.message-mode .lyrics-text .message-mark {
+    --mark: var(--message-mark, rgba(255, 196, 37, 0.4));
+    background-color: var(--mark);
+    box-shadow: 0 0 0 0.07em var(--mark);
+    border-radius: 0.1em;
+    color: inherit;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+}
+
+.projector.message-mode .lyrics-text .message-mark.fresh {
+    animation: message-mark-in 0.3s ease-out;
+}
+
+@keyframes message-mark-in {
+    from { background-color: transparent; box-shadow: 0 0 0 0.07em transparent; }
+}
+
+/* Notes in the text, such as [The listeners say amen.], shown as written
+ * but quieter than the words spoken. */
+.projector.message-mode .lyrics-text .message-note {
+    font-style: italic;
+    font-weight: inherit;
+    opacity: 0.6;
 }

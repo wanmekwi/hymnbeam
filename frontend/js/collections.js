@@ -284,15 +284,19 @@ function renderCollectionDetail() {
         container.innerHTML = songs.map((s, idx) => {
             const isActive = idx === state.collectionPosition;
             const type = s.item_type || 'song';
+            const quote = type === 'message' ? collectionMessageQuote(s) : null;
+            const title = quote ? quote.title : s.title;
             const subtitle = type === 'song' ? (s.author || '')
                            : type === 'bible' ? 'Bible passage'
+                           : quote ? quote.subtitle
                            : 'Holding slide';
+            const unavailable = quote?.unavailable ? ' entry-unavailable' : '';
             return `
-                <div class="collection-song-item ${isActive ? 'active-song' : ''} entry-${type}" data-entry-id="${s.id}">
+                <div class="collection-song-item ${isActive ? 'active-song' : ''} entry-${type}${unavailable}" data-entry-id="${s.id}">
                     <span class="collection-song-pos">${idx + 1}</span>
                     <span class="collection-entry-icon" title="${type}">${collectionEntryIcon(type)}</span>
                     <div class="collection-song-info">
-                        <div class="collection-song-title">${escapeHtml(s.title)}</div>
+                        <div class="collection-song-title">${escapeHtml(title)}</div>
                         ${subtitle ? `<div class="collection-song-author">${escapeHtml(subtitle)}</div>` : ''}
                     </div>
                     <div class="collection-song-controls">
@@ -320,6 +324,41 @@ function renderCollectionDetail() {
     document.getElementById('collectionNextBtn').disabled = pos >= total - 1;
 
     scrollActiveCollectionSongIntoView();
+    if (songs.some(s => s.item_type === 'message')) loadMessageLibraryForCollection();
+}
+
+// A prepared sermon quote's line in the list: the message's title from the
+// library (or, until it is read, the code and paragraph number), and under
+// it the paragraph number and code, or why it cannot be projected here.
+function collectionMessageQuote(entry) {
+    const quote = typeof parseMessageQuote === 'function' ? parseMessageQuote(entry.reference) : null;
+    if (!quote) return { title: entry.title, subtitle: 'Sermon quote', unavailable: true };
+    const work = messageState.byCode.get(quote.code);
+    const where = [quote.n != null ? `\u00b6${quote.n}` : null, quote.code].filter(Boolean).join(' · ');
+    const marks = quote.marks.length === 1 ? '1 highlight' : quote.marks.length ? `${quote.marks.length} highlights` : null;
+    const standing = messageQuoteStanding(quote);
+    const why = standing === 'no-library' ? 'Message library not installed'
+              : standing === 'missing' ? 'Not in the message library'
+              : null;
+    return {
+        title: work?.title || entry.title,
+        subtitle: why ? `${where} · ${why}` : [where, marks].filter(Boolean).join(' · '),
+        unavailable: !!why,
+    };
+}
+
+// The quotes' titles come from the message library: read it, once, if it has
+// not been yet, and redraw the list when it has.
+let collectionMessageLoading = false;
+function loadMessageLibraryForCollection() {
+    if (collectionMessageLoading || typeof ensureMessageCatalogue !== 'function') return;
+    const status = messageState.status;
+    if (status && !(status.installed && !messageState.catalogue && !messageState.loadError)) return;
+    collectionMessageLoading = true;
+    ensureMessageCatalogue().catch(e => console.error('collection quotes:', e)).finally(() => {
+        collectionMessageLoading = false;
+        renderCollectionDetail();
+    });
 }
 
 
@@ -330,11 +369,15 @@ function collectionEntryIcon(type) {
     if (type === 'logo') {
         return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="7" r="1.2"/><path d="M3 12l3-3 2.5 2.5L11 9l2 3"/></svg>';
     }
+    if (type === 'message') {
+        return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 5.5h3.5V9H4.5c0 1.5.5 2.3 2 2.8"/><path d="M9.5 5.5H13V9h-2c0 1.5.5 2.3 2 2.8"/></svg>';
+    }
     return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 3v8.5M6 3l7-1v8.5"/><circle cx="4.2" cy="11.5" r="1.8"/><circle cx="11.2" cy="10.5" r="1.8"/></svg>';
 }
 
 // Advance the projector to a collection entry, dispatching on its kind:
-// song → load lyrics; bible → project the passage; logo → holding slide.
+// song → load lyrics; bible → project the passage; message → project the
+// prepared quote; logo → holding slide.
 async function activateCollectionEntry(pos) {
     const entry = state.openCollection?.songs[pos];
     if (!entry) return;
@@ -352,6 +395,8 @@ async function activateCollectionEntry(pos) {
         }
         if (type === 'bible') {
             await projectCollectionBible(entry.reference);
+        } else if (type === 'message') {
+            await projectCollectionMessage(entry, pos);
         } else {
             await loadSong(entry.song_id);
         }
@@ -401,23 +446,28 @@ async function projectCollectionBible(reference) {
             hasPrev: false,
             hasNext: false
         };
-        const msg = { type: 'update-lyrics', ...payload };
-        if (previewsEnabled() && elements.previewFrame?.contentWindow) {
-            elements.previewFrame.contentWindow.postMessage(msg, '*');
-            clearNextPreview();
-        }
-        if (window.__TAURI__) {
-            if (state.projectorOpen) {
-                window.__TAURI__.core.invoke('send_to_projector', {
-                    event: 'update-lyrics', payload: JSON.stringify(payload)
-                }).catch(e => console.error('bible project error:', e));
-            }
-        } else if (window.projectorWindow) {
-            window.projectorWindow.postMessage(msg, '*');
-        }
+        sendSlideToProjector('bible', payload, elements.previewFrame);
     } catch (e) {
         console.error('projectCollectionBible:', e);
         updateStatus('Could not project passage');
+    }
+}
+
+// Project a prepared sermon quote (see showMessageQuote in messages.js). The
+// message is fetched first, so by the time it comes the operator may have
+// moved on to the next item: it is shown only if this is still the one.
+async function projectCollectionMessage(entry, pos) {
+    const quote = typeof parseMessageQuote === 'function' ? parseMessageQuote(entry.reference) : null;
+    if (!quote) {
+        updateStatus("Couldn't read this quote");
+        return;
+    }
+    const wanted = () => state.collectionPosition === pos && state.openCollection?.songs[pos]?.id === entry.id;
+    try {
+        await showMessageQuote(quote, wanted);
+    } catch (e) {
+        console.error('projectCollectionMessage:', e);
+        updateStatus('Could not project quote');
     }
 }
 
@@ -493,23 +543,24 @@ async function navigateCollection(direction) {
 }
 
 
+// Show one sidebar panel and mark its tab; every other panel is hidden.
+function showSidebarTab(tabId, panelId) {
+    for (const panel of document.querySelectorAll('.sidebar > .sidebar-panel')) {
+        panel.classList.toggle('hidden', panel.id !== panelId);
+    }
+    for (const tab of document.querySelectorAll('.sidebar-tabs > .sidebar-tab')) {
+        tab.classList.toggle('active', tab.id === tabId);
+    }
+}
+
+
 function openLibraryTab() {
-    document.getElementById('biblePanel').classList.add('hidden');
-    document.getElementById('bibleTabBtn').classList.remove('active');
-    document.getElementById('libraryPanel').classList.remove('hidden');
-    document.getElementById('collectionsPanel').classList.add('hidden');
-    document.getElementById('libraryTabBtn').classList.add('active');
-    document.getElementById('collectionsTabBtn').classList.remove('active');
+    showSidebarTab('libraryTabBtn', 'libraryPanel');
 }
 
 
 function openCollectionsTab() {
-    document.getElementById('biblePanel').classList.add('hidden');
-    document.getElementById('bibleTabBtn').classList.remove('active');
-    document.getElementById('libraryPanel').classList.add('hidden');
-    document.getElementById('collectionsPanel').classList.remove('hidden');
-    document.getElementById('libraryTabBtn').classList.remove('active');
-    document.getElementById('collectionsTabBtn').classList.add('active');
+    showSidebarTab('collectionsTabBtn', 'collectionsPanel');
 }
 
 
@@ -525,26 +576,35 @@ async function activateCollectionsTab() {
 }
 
 
-// Sidebar tab order, left to right — drives both the direct (Ctrl+1/2/3) and
-// the cycling ([ / ]) shortcuts. openBibleTab lives in bible.js, which loads
-// after this file; it is only referenced at keypress time so that is fine.
+// Sidebar tab order, left to right — drives both the direct (Ctrl+1–4) and
+// the cycling ([ / ]) shortcuts. openBibleTab and openMessagesTab live in
+// bible.js and messages.js, which load after this file; they are only
+// referenced at keypress time so that is fine.
 const SIDEBAR_TABS = [
     { id: 'libraryTabBtn', open: () => openLibraryTab() },
     { id: 'collectionsTabBtn', open: () => activateCollectionsTab() },
     { id: 'bibleTabBtn', open: () => openBibleTab() },
+    { id: 'messagesTabBtn', open: () => openMessagesTab() },
 ];
+
+// A hidden tab (the message library's, until one is imported) is passed over.
+const sidebarTabShown = (tab) => !document.getElementById(tab.id).classList.contains('hidden');
 
 function selectSidebarTab(index) {
     const tab = SIDEBAR_TABS[index];
-    if (tab) tab.open();
+    if (tab && sidebarTabShown(tab)) tab.open();
 }
 
 function cycleSidebarTab(direction) {
     const current = SIDEBAR_TABS.findIndex(
         t => document.getElementById(t.id).classList.contains('active'));
-    const from = current === -1 ? 0 : current;
+    let at = current === -1 ? 0 : current;
     // Wrap, so [ and ] keep working at either end of the row.
-    selectSidebarTab((from + direction + SIDEBAR_TABS.length) % SIDEBAR_TABS.length);
+    for (let i = 0; i < SIDEBAR_TABS.length; i++) {
+        at = (at + direction + SIDEBAR_TABS.length) % SIDEBAR_TABS.length;
+        if (sidebarTabShown(SIDEBAR_TABS[at])) break;
+    }
+    selectSidebarTab(at);
 }
 
 
@@ -633,5 +693,52 @@ async function addCurrentPassageToCollection(collectionId) {
     } catch (e) {
         console.error('addCurrentPassageToCollection:', e);
         updateStatus('Could not add passage to collection');
+    }
+}
+
+
+// ---------- Sermon quote → collection ----------
+
+// The reader gets its own picker, like the Bible view.
+async function toggleMessageCollectionPicker() {
+    const picker = document.getElementById('messageCollectionPicker');
+    if (picker.classList.contains('open')) {
+        picker.classList.remove('open');
+        return;
+    }
+    if (typeof messageQuoteNow !== 'function' || !messageQuoteNow()) {
+        updateStatus('Open a message first');
+        return;
+    }
+    await fetchCollections();
+    renderCollectionPickerList(document.getElementById('messageCollectionPickerList'));
+    picker.classList.add('open');
+}
+
+// Adds the place the reader would project from (see messageQuoteNow): the
+// screen as it stands, highlights and all, or the highlighted paragraph.
+async function addMessageQuoteToCollection(collectionId) {
+    const quote = typeof messageQuoteNow === 'function' ? messageQuoteNow() : null;
+    if (!quote) {
+        updateStatus('Open a message first');
+        return;
+    }
+    try {
+        const res = await fetch(`${API_URL}/collections/${collectionId}/songs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_type: 'message', reference: JSON.stringify(quote) })
+        });
+        if (!res.ok) throw new Error(`Add failed (${res.status})`);
+        document.getElementById('messageCollectionPicker').classList.remove('open');
+        await fetchCollections();
+        if (state.openCollection && sameCollectionId(state.openCollection.id, collectionId)) {
+            await openCollectionDetail(collectionId, { showView: false });
+        }
+        const title = messageState.message?.work.title || quote.code;
+        updateStatus(quote.n != null ? `Added ¶${quote.n} of ${title}` : `Added ${title}`);
+    } catch (e) {
+        console.error('addMessageQuoteToCollection:', e);
+        updateStatus('Could not add quote to collection');
     }
 }

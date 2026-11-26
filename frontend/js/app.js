@@ -31,6 +31,10 @@ function initMenuEvents() {
         openAboutModal();
         checkForUpdates();
     });
+    // The projector window's size, when it opens and when it changes.
+    on('projector-size', (event) => setMessageMeasureSize(event.payload));
+    // The wheel and the keys, when the projector window has them.
+    on('projector-input', (event) => onProjectorInput(event.payload));
     on('projector-closed', () => {
         state.projectorOpen = false;
         // The alert died with the projector window — reset the operator's
@@ -241,12 +245,19 @@ function initEventListeners() {
     //   1. Typing always wins — anything aimed at a field bails out early.
     //   2. Modifier chords bail out too, so the native menu accelerators
     //      (⌘⇧P, ⌘B, ⌘L …) stay the sole owners of their combinations and can
-    //      never double-fire against a plain key here. Ctrl+digit is the one
-    //      deliberate exception and is handled before that check.
+    //      never double-fire against a plain key here. Two chords are
+    //      deliberate exceptions, handled before that check: Ctrl+digit, and
+    //      ⌘F (Ctrl+F on Windows), which is in no menu.
     //   3. Escape unwinds one layer at a time rather than always clearing the
     //      display — see handleEscape().
     document.addEventListener('keydown', (e) => {
         const target = e.target;
+        // ⌘F finds in the message open in the reader, even from another
+        // field. Kept from the webview, which may have a find bar of its own.
+        if (isMessageFindKey(e) && focusMessageFind()) {
+            e.preventDefault();
+            return;
+        }
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
             // Escape is the way back out of a field the operator tabbed into.
             if (e.key === 'Escape') {
@@ -256,9 +267,9 @@ function initEventListeners() {
             return;
         }
 
-        // Ctrl+1/2/3 jump straight to a sidebar tab. Deliberately a chord so it
+        // Ctrl+1–4 jump straight to a sidebar tab. Deliberately a chord so it
         // doesn't collide with the bare digits that jump between verses.
-        if (e.ctrlKey && !e.metaKey && !e.altKey && ['1', '2', '3'].includes(e.key)) {
+        if (e.ctrlKey && !e.metaKey && !e.altKey && ['1', '2', '3', '4'].includes(e.key)) {
             e.preventDefault();
             selectSidebarTab(parseInt(e.key, 10) - 1);
             return;
@@ -277,11 +288,31 @@ function initEventListeners() {
         if (getOpenModal()) return;
 
         switch (e.key) {
+            // The arrows step whatever is on screen: a message on screen moves on
+            // or back a few lines (with Shift, a screen), otherwise the song
+            // steps to its next or previous verse.
             case 'ArrowRight':
-                navigateVerse(1);
+                if (!stepLiveMessage(1, { screen: e.shiftKey, repeat: e.repeat })) navigateVerse(1);
                 break;
             case 'ArrowLeft':
-                navigateVerse(-1);
+                if (!stepLiveMessage(-1, { screen: e.shiftKey, repeat: e.repeat })) navigateVerse(-1);
+                break;
+            // A message on screen rolls a line on or back (with Shift, a screen).
+            // If the reader's highlight is on something else, they move the
+            // highlight instead, and Enter projects it.
+            case 'ArrowDown':
+            case 'ArrowUp': {
+                // A focused drop-down keeps its own arrow keys.
+                if (target.closest && target.closest('select')) break;
+                const direction = e.key === 'ArrowDown' ? 1 : -1;
+                if (rollLiveMessageByKey(direction, { screen: e.shiftKey, repeat: e.repeat })
+                    || moveParagraphHighlight(direction)) e.preventDefault();
+                break;
+            }
+            case 'Enter':
+                // A focused button gets Enter as a click of its own.
+                if (target.closest && target.closest('button, a, select, summary')) break;
+                if (projectHighlightedParagraph()) e.preventDefault();
                 break;
             case ' ':
                 e.preventDefault();
@@ -417,6 +448,17 @@ function initEventListeners() {
         if (id) await addCurrentPassageToCollection(id);
     });
 
+    // Add the place in the message reader to a collection, as a prepared quote
+    document.getElementById('messageAddToCollectionBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleMessageCollectionPicker();
+    });
+    document.getElementById('messageCollectionPickerNew')?.addEventListener('click', async () => {
+        document.getElementById('messageCollectionPicker').classList.remove('open');
+        const id = await createCollection('New Collection');
+        if (id) await addMessageQuoteToCollection(id);
+    });
+
     // Close pickers when clicking outside
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.add-to-collection-wrapper')) {
@@ -475,6 +517,14 @@ function initEventListeners() {
             addCurrentPassageToCollection(parseInt(btn.dataset.id));
         }
     });
+
+    document.getElementById('messageCollectionPickerList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.collection-picker-item');
+        if (btn) {
+            e.stopPropagation();
+            addMessageQuoteToCollection(parseInt(btn.dataset.id));
+        }
+    });
 }
 
 
@@ -501,10 +551,12 @@ function syncPreviewScale() {
     // derive its slot from the frame itself. Without this it stays at the CSS
     // fallback scale(0.1) and the verse renders tiny in the pane's top-left.
     const bibleWindow = elements.biblePreviewFrame?.closest('.preview-window');
+    const messageWindow = elements.messagePreviewFrame?.closest('.preview-window');
     const panes = [
         [elements.previewWindow, elements.previewFrame],
         [elements.nextPreviewWindow, elements.nextPreviewFrame],
-        [bibleWindow, elements.biblePreviewFrame]
+        [bibleWindow, elements.biblePreviewFrame],
+        [messageWindow, elements.messagePreviewFrame]
     ];
     for (const [win, frame] of panes) {
         if (!win || !frame) continue;
@@ -534,12 +586,12 @@ function previewsEnabled() {
 function applyPreviewVisibility(hidden) {
     previewsHidden = hidden;
     elements.previewContainer.classList.toggle('collapsed', hidden);
-    if (elements.biblePreviewContainer) {
-        elements.biblePreviewContainer.classList.toggle('collapsed', hidden);
+    for (const container of [elements.biblePreviewContainer, elements.messagePreviewContainer]) {
+        if (container) container.classList.toggle('collapsed', hidden);
     }
-    // Both header buttons mirror the shared state; the icon shows the current
+    // The header buttons mirror the shared state; the icon shows the current
     // state and the tooltip names the action.
-    for (const btn of [elements.previewLayoutToggle, elements.biblePreviewToggle]) {
+    for (const btn of [elements.previewLayoutToggle, elements.biblePreviewToggle, elements.messagePreviewToggle]) {
         if (!btn) continue;
         btn.innerHTML = hidden ? SVG_EYE_OFF : SVG_EYE;
         btn.title = hidden ? 'Show preview' : 'Hide preview';
@@ -564,14 +616,15 @@ function initPreviewLayout() {
     try { hidden = localStorage.getItem(PREVIEW_HIDDEN_KEY) === '1'; } catch (e) { /* default */ }
     applyPreviewVisibility(hidden);
     elements.previewLayoutToggle.addEventListener('click', togglePreviewVisibility);
-    if (elements.biblePreviewToggle) {
-        elements.biblePreviewToggle.addEventListener('click', togglePreviewVisibility);
+    for (const btn of [elements.biblePreviewToggle, elements.messagePreviewToggle]) {
+        if (btn) btn.addEventListener('click', togglePreviewVisibility);
     }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
     initEventListeners();
     initBibleListeners();
+    initMessageListeners();
     initSettingsDialog();
     initMenuEvents();
     initPreviewLayout();
@@ -583,8 +636,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (elements.previewWindow) ro.observe(elements.previewWindow);
         // The Bible pane is display:none until its tab opens, so its window has
         // zero width at startup; observing it re-scales the moment it appears.
-        const bibleWindow = elements.biblePreviewFrame?.closest('.preview-window');
-        if (bibleWindow) ro.observe(bibleWindow);
+        // Likewise the message reader's pane.
+        for (const frame of [elements.biblePreviewFrame, elements.messagePreviewFrame]) {
+            const win = frame?.closest('.preview-window');
+            if (win) ro.observe(win);
+        }
     }
 
     const ready = await waitForBackend();
@@ -597,6 +653,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     openLibraryTab();
     fetchSongs();
     fetchCollections();
+    loadMessageStatus();      // names the message library tab
 
     // Look for a new version shortly after launch, once the UI has settled.
     // Quiet unless one exists; nothing is downloaded until the user says so.

@@ -9,6 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::bible::{get_books, get_chapter, search_bible, SearchHit};
+use crate::messages::{self, LibraryError, SearchFilter};
 use crate::collections::{
     add_item_to_collection, create_collection, delete_collection, get_all_collections,
     get_collection, remove_song_from_collection, rename_collection, reorder_collection_songs,
@@ -463,6 +464,14 @@ async fn add_song_to_col(
             (None, Some(r))
         }
         "logo" => (None, None),
+        // A prepared sermon quote: a reference naming a message, never its text.
+        "message" => {
+            let r = body
+                .reference
+                .filter(|s| crate::collections::message_quote_title(s).is_some())
+                .ok_or(StatusCode::BAD_REQUEST)?;
+            (None, Some(r))
+        }
         _ => return Err(StatusCode::BAD_REQUEST),
     };
     add_item_to_collection(collection_id, item_type, song_id, reference.as_deref())
@@ -581,6 +590,79 @@ async fn handle_bible_search(Query(params): Query<BibleSearchQuery>) -> impl Int
     }
 }
 
+// Message library routes. /messages/status always answers (installed: false
+// when there is no library); the others answer 404 when there is no library or
+// no such message, so the tab checks the status first.
+fn library_error(e: LibraryError) -> Response {
+    let status = match e {
+        LibraryError::NotInstalled | LibraryError::NotFound => StatusCode::NOT_FOUND,
+        LibraryError::Invalid(_) => StatusCode::BAD_REQUEST,
+        LibraryError::Sql(_) | LibraryError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, e.to_string()).into_response()
+}
+
+fn library_json<T: Serialize>(result: Result<T, LibraryError>) -> Response {
+    match result {
+        Ok(value) => Json(value).into_response(),
+        Err(e) => library_error(e),
+    }
+}
+
+async fn handle_messages_status() -> Response {
+    library_json(messages::library().status())
+}
+
+// The whole catalogue (every message and book chapter, without text): about
+// 1,200 rows, which the tab browses and searches by title, date and date code.
+async fn handle_messages_catalogue() -> Response {
+    library_json(messages::library().catalogue())
+}
+
+async fn handle_message(Path(code): Path<String>) -> Response {
+    library_json(messages::library().message(&code))
+}
+
+#[derive(Deserialize)]
+struct MessageSearchQuery {
+    #[serde(default)]
+    q: String,
+    /// "message", "book", or "all"/empty for both.
+    kind: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+    code: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn handle_messages_search(Query(p): Query<MessageSearchQuery>) -> Response {
+    let kind = match p.kind.as_deref() {
+        None | Some("") | Some("all") => None,
+        Some(k @ ("message" | "book")) => Some(k.to_string()),
+        Some(_) => {
+            return (StatusCode::BAD_REQUEST, "kind must be message, book or all").into_response()
+        }
+    };
+    let filter = SearchFilter {
+        kind,
+        year_from: p.from,
+        year_to: p.to,
+        code: p.code.filter(|c| !c.is_empty()),
+    };
+    if p.q.trim().is_empty() {
+        // Still report a missing library, so the tab can show what to do.
+        return library_json(messages::library().status().and_then(|s| {
+            if s.installed {
+                Ok(Vec::<messages::Hit>::new())
+            } else {
+                Err(LibraryError::NotInstalled)
+            }
+        }));
+    }
+    let limit = p.limit.unwrap_or(messages::DEFAULT_SEARCH_LIMIT);
+    library_json(messages::library().search(&p.q, &filter, limit))
+}
+
 pub fn create_router() -> Router {
     // The router is mounted onto a Tauri custom URI scheme handler (see
     // tauri-plugin-axum in main.rs), so requests come straight from the
@@ -624,4 +706,135 @@ pub fn create_router() -> Router {
         .route("/bible/books", get(handle_bible_books))
         .route("/bible/search", get(handle_bible_search))
         .route("/bible/{book}/{chapter}", get(handle_bible_chapter))
+        .route("/messages", get(handle_messages_catalogue))
+        .route("/messages/status", get(handle_messages_status))
+        .route("/messages/search", get(handle_messages_search))
+        .route("/messages/{code}", get(handle_message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::create_router;
+    use crate::messages::test_util::{build_library, TempDir, FIRST};
+    use crate::messages::{self, APPLICATION_ID, FORMAT_VERSION};
+    use axum::body::{to_bytes, Body};
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn get(path: &str) -> (StatusCode, serde_json::Value) {
+        let response = create_router()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    async fn post(path: &str, body: serde_json::Value) -> StatusCode {
+        create_router()
+            .oneshot(
+                Request::post(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+    }
+
+    // A prepared sermon quote goes in by reference, which must name a message;
+    // it comes back as written, titled by its code and paragraph number.
+    #[tokio::test]
+    async fn a_sermon_quote_is_added_by_reference_and_a_bad_one_refused() {
+        let _db = crate::db::test_util::setup_temp_db();
+        let id = crate::collections::create_collection("Evening").unwrap();
+        let path = format!("/collections/{}/songs", id);
+        let reference = r#"{"v":1,"code":"50-0101","at":1,"n":2,"offset":0}"#;
+        let good = serde_json::json!({ "item_type": "message", "reference": reference });
+        assert_eq!(post(&path, good).await, StatusCode::OK);
+        for bad in [
+            serde_json::json!({ "item_type": "message" }),
+            serde_json::json!({ "item_type": "message", "reference": "50-0101:2" }),
+            serde_json::json!({ "item_type": "message", "reference": r#"{"n":2}"# }),
+        ] {
+            assert_eq!(post(&path, bad.clone()).await, StatusCode::BAD_REQUEST, "{}", bad);
+        }
+
+        let (status, body) = get(&path[..path.len() - "/songs".len()]).await;
+        assert_eq!(status, StatusCode::OK);
+        let entries = body["songs"].as_array().unwrap();
+        assert_eq!(entries.len(), 1, "only the good one");
+        assert_eq!(entries[0]["item_type"], "message");
+        assert_eq!(entries[0]["reference"], reference);
+        assert_eq!(entries[0]["title"], "50-0101 \u{b6}2");
+    }
+
+    fn codes(hits: &serde_json::Value) -> Vec<&str> {
+        hits.as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["code"].as_str().unwrap())
+            .collect()
+    }
+
+    // The only test that uses the app's own library (one per test process), so
+    // it runs every check in order: nothing installed, installed, removed.
+    #[tokio::test]
+    async fn message_routes() {
+        let lib = messages::library();
+        lib.remove().unwrap();
+
+        let (status, body) = get("/messages/status").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["installed"], false);
+        for path in ["/messages", "/messages/50-0101", "/messages/search?q=river", "/messages/search?q="] {
+            assert_eq!(get(path).await.0, StatusCode::NOT_FOUND, "{}", path);
+        }
+
+        let dir = TempDir::new("routes");
+        let source = dir.join("source.db");
+        build_library(&source, FIRST, APPLICATION_ID, FORMAT_VERSION);
+        lib.import(&source, |_, _| {}).unwrap();
+
+        let (status, body) = get("/messages/status").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["installed"], true);
+        assert_eq!(body["message_count"], 2);
+        assert_eq!(body["tab_label"], "The Test Tab");
+
+        // "status" and "search" are routes of their own, not message codes.
+        let (status, body) = get("/messages").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(codes(&body), vec!["BK-01", "50-0101", "60-0202E"]);
+
+        let (status, body) = get("/messages/50-0101").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["title"], "Morning Over The Valley");
+        assert_eq!(body["paragraphs"].as_array().unwrap().len(), 4);
+        assert_eq!(get("/messages/99-9999").await.0, StatusCode::NOT_FOUND);
+
+        let (status, body) = get("/messages/search?q=river%20ran%20quietly").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_array().unwrap().len(), 3);
+        assert_eq!(body[0]["group"], "phrase");
+
+        let (_, body) = get("/messages/search?q=the&kind=book").await;
+        assert!(codes(&body).iter().all(|c| *c == "BK-01"));
+        let (_, body) = get("/messages/search?q=the&kind=all&from=1955&to=1965").await;
+        assert!(!codes(&body).is_empty());
+        assert!(codes(&body).iter().all(|c| *c == "60-0202E"));
+        let (_, body) = get("/messages/search?q=the&code=50-0101").await;
+        assert!(codes(&body).iter().all(|c| *c == "50-0101"));
+        let (_, body) = get("/messages/search?q=the&limit=2").await;
+        assert_eq!(body.as_array().unwrap().len(), 2);
+        let (status, body) = get("/messages/search?q=%20").await;
+        assert_eq!((status, body), (StatusCode::OK, serde_json::json!([])));
+        assert_eq!(get("/messages/search?q=the&kind=sermon").await.0, StatusCode::BAD_REQUEST);
+
+        lib.remove().unwrap();
+        assert_eq!(get("/messages/status").await.1["installed"], false);
+    }
 }

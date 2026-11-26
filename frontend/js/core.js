@@ -37,6 +37,10 @@ const state = {
     openCollection: null,   // currently open collection (full with songs)
     collectionPosition: -1, // index of active song in open collection
     settings: null,         // display settings (typography + background)
+    // On screen in place of the song's verse: a Bible verse or a message
+    // paragraph, as {kind, payload, previewFrame}. Null while the song is live.
+    // See sendSlideToProjector in live.js.
+    liveSlide: null,
 };
 
 const DEFAULT_SETTINGS = {
@@ -58,6 +62,28 @@ const DEFAULT_SETTINGS = {
     bible: {
         separate: false,
         initialized: false,
+        typography: { fontFamily: 'Montserrat', fontWeight: 600, alignment: 'left' },
+        background: {
+            kind: 'solid',
+            color: '#000000',
+            gradient: { from: '#000000', to: '#1a1a2e', angle: 180 },
+            image: { filename: null, dim: 0.4 }
+        },
+        layout: { showTitleBar: true, showMetaBar: true, showVerseLabel: false, autoBreakLines: true, safeAreaPct: 5 },
+        transition: { style: 'fade-up', durationMs: 400 }
+    },
+    // The message library's display (The Message target). While `separate` is
+    // false, paragraphs look exactly as scripture does, alignment included.
+    // `fontPct` and `details` apply either way: the size of the text, as a
+    // share of the screen height (see MESSAGE_FONT_PCT in message-scroll.js
+    // for its range), and where the message's details (its title, date code
+    // and place) go, at the top or the foot of the screen, and whether in
+    // capitals.
+    message: {
+        separate: false,
+        initialized: false,
+        fontPct: MESSAGE_FONT_PCT.default,
+        details: { position: 'top', caps: true },
         typography: { fontFamily: 'Montserrat', fontWeight: 600, alignment: 'left' },
         background: {
             kind: 'solid',
@@ -110,6 +136,10 @@ const elements = {
     bibleDisplayTitle: document.getElementById('bibleDisplayTitle'),
     bibleDisplaySubtitle: document.getElementById('bibleDisplaySubtitle'),
     biblePreviewFrame: document.getElementById('biblePreviewFrame'),
+    messageDisplay: document.getElementById('messageDisplay'),
+    messagePreviewFrame: document.getElementById('messagePreviewFrame'),
+    messagePreviewContainer: document.getElementById('messagePreviewContainer'),
+    messagePreviewToggle: document.getElementById('messagePreviewToggle'),
     displayTitle: document.getElementById('displayTitle'),
     displayAuthor: document.getElementById('displayAuthor'),
     displaySource: document.getElementById('displaySource'),
@@ -239,6 +269,19 @@ const elements = {
     settingsPreview: document.getElementById('settingsPreview'),
     settingsPreviewText: document.querySelector('.settings-preview-text'),
     settingsTargetRow: document.getElementById('settingsTargetRow'),
+    setDisplayTargetMessage: document.getElementById('setDisplayTargetMessage'),
+    messageTargetOptions: document.getElementById('messageTargetOptions'),
+    setMessageSameAsBible: document.getElementById('setMessageSameAsBible'),
+    messageMatchBibleBtn: document.getElementById('messageMatchBibleBtn'),
+    messageFontGroup: document.getElementById('messageFontGroup'),
+    setMessageFont: document.getElementById('setMessageFont'),
+    setMessageFontValue: document.getElementById('setMessageFontValue'),
+    messageDetailsGroup: document.getElementById('messageDetailsGroup'),
+    messageDetailsCapsGroup: document.getElementById('messageDetailsCapsGroup'),
+    setMessageDetailsPosition: document.getElementById('setMessageDetailsPosition'),
+    setMessageDetailsCaps: document.getElementById('setMessageDetailsCaps'),
+    setShowTitleBarLabel: document.getElementById('setShowTitleBarLabel'),
+    messageMeasureFrame: document.getElementById('messageMeasureFrame'),
     setDisplayTarget: document.getElementById('setDisplayTarget'),
     bibleTargetOptions: document.getElementById('bibleTargetOptions'),
     setBibleSameAsSongs: document.getElementById('setBibleSameAsSongs'),

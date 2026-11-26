@@ -2,7 +2,7 @@
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { bootApp } = require('./helpers/boot');
-const { songs } = require('./helpers/fixtures');
+const { songs, messageLibrary } = require('./helpers/fixtures');
 
 let app;
 afterEach(() => app?.close());
@@ -35,6 +35,9 @@ test('with nothing saved the defaults are used', async () => {
     assert.equal(s.background.kind, 'solid');
     assert.equal(s.bible.separate, false);
     assert.equal(s.bible.typography.alignment, 'left', 'scripture reads flush-left by default');
+    assert.equal(s.message.separate, false, 'messages look as scripture does');
+    assert.equal(s.message.fontPct, 4.5);
+    assert.deepEqual(s.message.details, { position: 'top', caps: true }, 'a sermon\'s details at the top, in capitals');
 });
 
 test('saved settings are loaded, and anything they lack falls back to the default', async () => {
@@ -299,4 +302,140 @@ test('the dialog always reopens on the Songs profile', async () => {
     await app.click('#settingsBtn');
     assert.equal(active('setDisplayTarget'), 'song');
     assert.equal(hidden('bibleTargetOptions'), true);
+});
+
+// ---- The message display -----------------------------------------------------
+
+const locked = () => app.$('.settings-content').classList.contains('message-locked');
+
+test('the message display is named after the library, and mirrors the Bible\'s by default', async () => {
+    await openSettings({
+        messages: messageLibrary,
+        settings: { bible: { separate: true, initialized: true, typography: { fontFamily: 'Lora', alignment: 'center' } } },
+    });
+    assert.equal(app.$('#setDisplayTarget button[data-value="message"]').textContent, 'The Test Tab');
+    await pick('setDisplayTarget', 'message');
+    assert.equal(app.$('#setMessageSameAsBible').checked, true);
+    assert.equal(locked(), true);
+    assert.equal(app.$('#setFontFamily').value, 'Lora', 'it shows the Bible look it is mirroring');
+    assert.equal(active('setAlignment'), 'center', 'alignment included');
+    assert.equal(hidden('setLogoGroup'), true);
+    assert.equal(hidden('bibleTargetOptions'), true);
+    assert.equal(hidden('messageTargetOptions'), false);
+    assert.equal(hidden('messageMatchBibleBtn'), true);
+});
+
+test('with no library there is no message display to set', async () => {
+    await openSettings();
+    assert.equal(app.$('#setDisplayTarget button[data-value="message"]').classList.contains('hidden'), true);
+});
+
+test('the text size is the message display\'s own, even while it mirrors', async () => {
+    await openSettings();
+    await pick('setDisplayTarget', 'message');
+    assert.equal(hidden('messageFontGroup'), false);
+    assert.equal(app.$('#setMessageFontValue').textContent, '4.5% · 49 px at 1080p');
+    await app.type('#setMessageFont', '3.5');
+    assert.equal(app.$('#setMessageFontValue').textContent, '3.5% · 38 px at 1080p');
+    assert.equal(pushed().message.fontPct, 3.5);
+    assert.equal(pushed().message.separate, false, 'changing it does not split the profile off');
+    await waitForSave();
+    assert.equal(saved().message.fontPct, 3.5);
+
+    await pick('setDisplayTarget', 'bible');
+    assert.equal(hidden('messageFontGroup'), true, 'scripture is sized to fit, as before');
+});
+
+test('where a sermon\'s details go, and whether in capitals, is the message display\'s own', async () => {
+    await openSettings();
+    assert.equal(hidden('messageDetailsGroup'), true, 'not for songs');
+    assert.equal(hidden('messageDetailsCapsGroup'), true);
+    await pick('setDisplayTarget', 'message');
+    assert.equal(hidden('messageDetailsGroup'), false);
+    assert.equal(hidden('messageDetailsCapsGroup'), false);
+    assert.equal(locked(), true, 'while it mirrors the Bible\'s display');
+    for (const id of ['messageDetailsGroup', 'messageDetailsCapsGroup']) {
+        assert.equal(app.$(`#${id}`).classList.contains('message-own-setting'), true, `${id} can still be changed`);
+    }
+    assert.equal(active('setMessageDetailsPosition'), 'top');
+    assert.equal(app.$('#setMessageDetailsCaps').checked, true);
+
+    await pick('setMessageDetailsPosition', 'bottom');
+    assert.equal(active('setMessageDetailsPosition'), 'bottom');
+    assert.deepEqual(pushed().message.details, { position: 'bottom', caps: true });
+    await app.check('#setMessageDetailsCaps', false);
+    assert.deepEqual(pushed().message.details, { position: 'bottom', caps: false });
+    assert.equal(pushed().message.separate, false, 'changing them does not split the profile off');
+    await waitForSave();
+    assert.deepEqual(saved().message.details, { position: 'bottom', caps: false }, 'both changes saved together');
+
+    await pick('setDisplayTarget', 'bible');
+    assert.equal(hidden('messageDetailsGroup'), true, 'not for scripture');
+    assert.equal(hidden('messageDetailsCapsGroup'), true);
+});
+
+test('saved sermon details are loaded, and anything missing or wrong takes the default', async () => {
+    await openSettings({ settings: { message: { details: { position: 'bottom', caps: false } } } });
+    assert.deepEqual(settings().message.details, { position: 'bottom', caps: false });
+    app.close();
+    await openSettings({ settings: { message: { fontPct: 5 } } });
+    assert.deepEqual(settings().message.details, { position: 'top', caps: true }, 'saved before the option was offered');
+    app.close();
+    await openSettings({ settings: { message: { details: { position: 'left', caps: 'yes' } } } });
+    assert.deepEqual(settings().message.details, { position: 'top', caps: true });
+});
+
+test('a message has its details, not a song\'s bars, so only that toggle is offered', async () => {
+    await openSettings();
+    await pick('setDisplayTarget', 'message');
+    await app.check('#setMessageSameAsBible', false);
+    assert.equal(app.$('#setShowTitleBarLabel').textContent, 'Show the sermon details');
+    for (const id of ['setShowMetaBar', 'setShowVerseLabel', 'setAutoBreakLines']) {
+        assert.equal(app.$(`#${id}`).closest('.form-group').classList.contains('hidden'), true, id);
+    }
+    await app.check('#setShowTitleBar', false);
+    assert.equal(pushed().message.layout.showTitleBar, false);
+    assert.equal(pushed().layout.showTitleBar, true, 'the songs keep theirs');
+
+    await pick('setDisplayTarget', 'song');
+    assert.equal(app.$('#setShowTitleBarLabel').textContent, 'Show song title bar');
+    assert.equal(app.$('#setShowMetaBar').closest('.form-group').classList.contains('hidden'), false);
+});
+
+test('splitting the message display off starts it as a copy of what the Bible uses', async () => {
+    await openSettings({ settings: {
+        typography: { fontFamily: 'Inter', fontWeight: 500 },
+        background: { kind: 'gradient' },
+        bible: { typography: { alignment: 'center' } },
+    } });
+    await pick('setDisplayTarget', 'message');
+    await app.check('#setMessageSameAsBible', false);
+    const m = pushed().message;
+    assert.equal(m.separate, true);
+    assert.equal(m.initialized, true);
+    assert.equal(m.typography.fontFamily, 'Inter', 'the Bible mirrors the songs, so this does too');
+    assert.equal(m.typography.fontWeight, 500);
+    assert.equal(m.typography.alignment, 'center', 'with the Bible\'s alignment');
+    assert.equal(m.background.kind, 'gradient');
+    assert.equal(m.fontPct, 4.5);
+    assert.equal(locked(), false);
+
+    await app.type('#setFontFamily', 'Crimson Pro', 'change');
+    assert.equal(pushed().message.typography.fontFamily, 'Crimson Pro');
+    assert.equal(pushed().typography.fontFamily, 'Inter');
+    assert.equal(pushed().bible.separate, false);
+
+    await app.click('#messageMatchBibleBtn');
+    assert.equal(pushed().message.typography.fontFamily, 'Inter');
+});
+
+test('settings saved before the message display existed load as mirroring the Bible', async () => {
+    app = await bootApp({ songs, settings: { typography: { fontFamily: 'Lora' }, bible: { separate: true } } });
+    assert.equal(settings().message.separate, false);
+    assert.equal(settings().message.fontPct, 4.5);
+});
+
+test('a saved text size out of range is brought back into it', async () => {
+    app = await bootApp({ songs, settings: { message: { fontPct: 40 } } });
+    assert.equal(settings().message.fontPct, 8);
 });

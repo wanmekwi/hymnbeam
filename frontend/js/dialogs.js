@@ -45,7 +45,12 @@ const SHORTCUT_GROUPS = [
     {
         title: 'During the service',
         items: [
-            { keys: ['→', '/', '←'], action: 'Next / previous verse' },
+            { keys: ['→', '/', '←'], action: 'Next / previous verse, or roll a message on screen three lines (hold to keep it rolling)' },
+            { keys: ['↓', '/', '↑'], action: 'Roll a message on screen a line (hold to keep it rolling); otherwise move the highlight in the reader' },
+            { keys: ['{shift}↓', '/', '{shift}↑'], action: 'Roll a message on screen a screen at a time (Shift with → or ← does too)' },
+            { keys: ['Enter'], action: 'Project the highlighted paragraph' },
+            { keys: ['{mod}F'], action: 'Find in the open message: ↓ / ↑ choose a result, Enter goes to it, and Enter again projects it' },
+            { keys: ['Drag'], action: 'Across words of the message on screen, in the reader: highlight them on screen. Click a highlight to take it off; Esc takes them all off' },
             { keys: ['1'], action: 'Jump to verse 1–9' , label: '1–9' },
             { keys: ['0'], action: 'Jump to verse 10' },
             { keys: ['PgDn', '/', 'PgUp'], action: 'Next / previous item in the open collection' },
@@ -76,7 +81,7 @@ const SHORTCUT_GROUPS = [
         title: 'Getting around',
         items: [
             { keys: ['/'], action: 'Search the song library', literalSlash: true },
-            { keys: ['{ctrl}1', '/', '{ctrl}2', '/', '{ctrl}3'], action: 'Library / Collections / Bible tab' },
+            { keys: ['{ctrl}1', '/', '{ctrl}2', '/', '{ctrl}3', '/', '{ctrl}4'], action: 'Library / Collections / Bible / message tab (once a message library is imported)' },
             { keys: ['[', '/', ']'], action: 'Previous / next sidebar tab' },
             { keys: ['?'], action: 'Show this list' },
         ],
@@ -150,7 +155,8 @@ function getOpenModal() {
 }
 
 // Escape peels off one layer at a time — dialog, then popover, then the alert
-// banner, and only then the projected slide. Clearing the display is the most
+// banner, then the highlights of a message on screen, and only then the
+// projected slide. Clearing the display is the most
 // destructive of those, so it must never be what a stray Escape does while
 // something else is on screen.
 function handleEscape() {
@@ -168,6 +174,7 @@ function handleEscape() {
         clearAlert();
         return;
     }
+    if (state.liveSlide?.kind === 'message' && clearMessageMarks()) return;
     state.currentSong = null;
     state.currentVerseIndex = 0;
     renderSongDisplay();
